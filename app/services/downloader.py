@@ -9,21 +9,14 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def get_base_ydl_options() -> dict:
-    """Strict mobile client configuration to bypass Heroku Datacenter IP blocks without cookies."""
+    """Base yt-dlp options shared by all supported platforms."""
     return {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'geo_bypass': True,  # Bypasses geographic IP restrictions
+        'geo_bypass': True,
         'nocheckcertificate': True,
-        'source_address': '0.0.0.0', # Force IPv4 to avoid IPv6 blocks
-        'extractor_args': {
-            'youtube': {
-                # Strictly use mobile creator clients which have the lowest bot protections
-                'player_client': ['android_creator', 'ios', 'android'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        }
+        'source_address': '0.0.0.0',
     }
 
 
