@@ -3,36 +3,28 @@ import asyncio
 from typing import Dict, Any, Optional
 import yt_dlp
 
-# Calculate absolute project root directory
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
-COOKIE_FILE = os.path.join(BASE_DIR, "cookies.txt")
-
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def get_base_ydl_options() -> dict:
-    """Base yt-dlp options configured with absolute paths and YouTube bot-bypass headers."""
-    opts = {
+    """Strict mobile client configuration to bypass Heroku Datacenter IP blocks without cookies."""
+    return {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'geo_bypass': True,  # Bypasses geographic IP restrictions
+        'nocheckcertificate': True,
+        'source_address': '0.0.0.0', # Force IPv4 to avoid IPv6 blocks
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'mweb'],
+                # Strictly use mobile creator clients which have the lowest bot protections
+                'player_client': ['android_creator', 'ios', 'android'],
+                'player_skip': ['webpage', 'configs'],
             }
         }
     }
-    
-    # Check absolute path for cookies.txt
-    if os.path.exists(COOKIE_FILE):
-        opts['cookiefile'] = COOKIE_FILE
-        print(f"✅ SUCCESS: Loaded cookies file from {COOKIE_FILE}")
-    else:
-        print(f"⚠️ WARNING: cookies.txt not found at {COOKIE_FILE}")
-
-    return opts
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
@@ -115,4 +107,4 @@ def cleanup_file(file_path: Optional[str]):
         try:
             os.remove(file_path)
         except Exception as e:
-            print(f"Error removing temp file {file_path}: {e}")
+            pass
