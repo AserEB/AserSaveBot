@@ -32,8 +32,13 @@ def get_base_ydl_options() -> dict:
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
     """Extracts video metadata without downloading the file."""
     ydl_opts = get_base_ydl_options()
-    ydl_opts['skip_download'] = True
-    ydl_opts['extract_flat'] = False
+    ydl_opts.update({
+        'skip_download': True,
+        'noplaylist': True,
+        'extract_flat': False,
+        # Flexible format selector to avoid 'Requested format is not available' error
+        'format': 'best/bestvideo+bestaudio/all',
+    })
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -52,10 +57,19 @@ async def download_media_file(
     format_spec: str, 
     custom_filename: str
 ) -> Optional[str]:
-    """Downloads media file using yt-dlp based on requested format."""
+    """Downloads media file using yt-dlp based on requested format with fallbacks."""
     output_path = os.path.join(DOWNLOAD_DIR, custom_filename)
     
     ydl_opts = get_base_ydl_options()
+
+    # Add flexible resolution fallbacks
+    if "1080" in format_spec:
+        format_spec = "bestvideo[height<=1080]+bestaudio/bestvideo[height<=1080]/best[height<=1080]/best"
+    elif "720" in format_spec:
+        format_spec = "bestvideo[height<=720]+bestaudio/bestvideo[height<=720]/best[height<=720]/best"
+    elif "480" in format_spec:
+        format_spec = "bestvideo[height<=480]+bestaudio/bestvideo[height<=480]/best[height<=480]/best"
+
     ydl_opts['format'] = format_spec
     ydl_opts['outtmpl'] = output_path
     ydl_opts['overwrites'] = True
