@@ -16,10 +16,10 @@ def get_base_ydl_options() -> dict:
     opts = {
         'quiet': True,
         'no_warnings': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'web'],
+                'player_client': ['android', 'ios'],
             }
         }
     }
@@ -32,11 +32,10 @@ def get_base_ydl_options() -> dict:
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
     """Extracts video metadata without downloading the file."""
     ydl_opts = get_base_ydl_options()
+    # DO NOT specify 'format' here so yt-dlp never raises format availability errors during metadata fetching
     ydl_opts.update({
         'skip_download': True,
         'noplaylist': True,
-        'extract_flat': False,
-        'format': 'b/bv*+ba/best',
     })
 
     def _extract():
@@ -65,7 +64,7 @@ async def download_media_file(
 
     # 1. Configure MP3 audio extraction if requested
     if "mp3" in format_spec.lower() or "mp3" in custom_filename.lower():
-        ydl_opts['format'] = 'ba/bestaudio/b'
+        ydl_opts['format'] = 'ba/b'
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -80,7 +79,7 @@ async def download_media_file(
         elif "480" in format_spec:
             ydl_opts['format'] = 'bv*[height<=480]+ba/b[height<=480]/bv*+ba/b'
         else:
-            ydl_opts['format'] = 'bv*+ba/b/best'
+            ydl_opts['format'] = 'bv*+ba/b'
 
     def _download(options):
         with yt_dlp.YoutubeDL(options) as ydl:
@@ -91,13 +90,13 @@ async def download_media_file(
     try:
         path = await asyncio.to_thread(_download, ydl_opts)
     except Exception as e:
-        print(f"Primary format failed for {url}: {e}. Retrying with universal fallback 'b/best'...")
+        print(f"Primary format failed for {url}: {e}. Retrying with universal fallback 'b'...")
         
-        # Fallback attempt if requested quality stream is missing or restricted
+        # Universal Fallback attempt
         fallback_opts = get_base_ydl_options()
         fallback_opts['outtmpl'] = output_path
         fallback_opts['overwrites'] = True
-        fallback_opts['format'] = 'b/best'
+        fallback_opts['format'] = 'b'
         
         if "mp3" in custom_filename.lower():
             fallback_opts['postprocessors'] = [{
@@ -112,7 +111,7 @@ async def download_media_file(
             print(f"Fallback download also failed: {fallback_err}")
             return None
 
-    # Check file status and handles extension changes by FFmpeg
+    # Check file status and handle extension changes by FFmpeg
     if path and os.path.exists(path):
         return path
     
