@@ -3,27 +3,35 @@ import asyncio
 from typing import Dict, Any, Optional
 import yt_dlp
 
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+# Calculate absolute project root directory
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
+COOKIE_FILE = os.path.join(BASE_DIR, "cookies.txt")
 
-COOKIE_FILE = "cookies.txt"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def get_base_ydl_options() -> dict:
-    """Base yt-dlp options configured to bypass YouTube datacenter IP blocks."""
+    """Base yt-dlp options configured with absolute paths and YouTube bot-bypass headers."""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        # tv_embedded and android clients do not trigger 'Sign in' bot verification on cloud servers
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
         'extractor_args': {
             'youtube': {
-                'player_client': ['tv_embedded', 'android', 'mweb'],
+                'player_client': ['android', 'ios', 'mweb'],
             }
         }
     }
+    
+    # Check absolute path for cookies.txt
     if os.path.exists(COOKIE_FILE):
         opts['cookiefile'] = COOKIE_FILE
+        print(f"✅ SUCCESS: Loaded cookies file from {COOKIE_FILE}")
+    else:
+        print(f"⚠️ WARNING: cookies.txt not found at {COOKIE_FILE}")
+
     return opts
 
 
@@ -80,7 +88,7 @@ async def download_media_file(
         if os.path.exists(path):
             return path
     except Exception as e:
-        print(f"Primary format failed: {e}. Retrying with fallback...")
+        print(f"Primary format failed: {e}. Retrying with universal fallback...")
         fallback_opts = get_base_ydl_options()
         fallback_opts['outtmpl'] = output_path
         fallback_opts['overwrites'] = True
