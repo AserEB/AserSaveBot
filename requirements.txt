@@ -3,4 +3,6 @@ supabase>=2.3.4,<3.0.0
 git+https://github.com/yt-dlp/yt-dlp.git
 python-dotenv>=1.0.1
 pydantic-settings>=2.2.1
-aiohttp>=3.9.3
+aiohttp>=3.9.3curl_cffi
+curl_cffi
+curl_cffi
