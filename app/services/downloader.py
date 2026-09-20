@@ -3,24 +3,22 @@ import asyncio
 from typing import Dict, Any, Optional
 import yt_dlp
 
-# Directory for storing temporary video/audio files
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Path to YouTube Cookies File
 COOKIE_FILE = "cookies.txt"
 
 
 def get_base_ydl_options() -> dict:
-    """Base yt-dlp options configured for maximum YouTube compatibility."""
+    """Base yt-dlp options configured to bypass YouTube datacenter IP blocks."""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        # 'mweb' and 'android' clients provide the most stable video formats without format-unavailable errors
+        # tv_embedded and android clients do not trigger 'Sign in' bot verification on cloud servers
         'extractor_args': {
             'youtube': {
-                'player_client': ['mweb', 'android', 'web'],
+                'player_client': ['tv_embedded', 'android', 'mweb'],
             }
         }
     }
@@ -56,7 +54,6 @@ async def download_media_file(
     ydl_opts['outtmpl'] = output_path
     ydl_opts['overwrites'] = True
 
-    # 1. Configure MP3 audio extraction if requested
     if "mp3" in format_spec.lower() or "mp3" in custom_filename.lower():
         ydl_opts['format'] = 'bestaudio/best'
         ydl_opts['postprocessors'] = [{
@@ -78,15 +75,12 @@ async def download_media_file(
             ydl.download([url])
         return output_path
 
-    # Try downloading with primary format selection
     try:
         path = await asyncio.to_thread(_download, ydl_opts)
         if os.path.exists(path):
             return path
     except Exception as e:
-        print(f"Primary format failed: {e}. Retrying with absolute fallback...")
-        
-        # Absolute Fallback attempt
+        print(f"Primary format failed: {e}. Retrying with fallback...")
         fallback_opts = get_base_ydl_options()
         fallback_opts['outtmpl'] = output_path
         fallback_opts['overwrites'] = True
