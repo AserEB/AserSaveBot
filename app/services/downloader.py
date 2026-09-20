@@ -36,8 +36,7 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
         'skip_download': True,
         'noplaylist': True,
         'extract_flat': False,
-        # Flexible format selector to avoid 'Requested format is not available' error
-        'format': 'best/bestvideo+bestaudio/all',
+        'format': 'b/bv*+ba/best',
     })
 
     def _extract():
@@ -57,48 +56,71 @@ async def download_media_file(
     format_spec: str, 
     custom_filename: str
 ) -> Optional[str]:
-    """Downloads media file using yt-dlp based on requested format with fallbacks."""
+    """Downloads media file using yt-dlp with automatic format fallbacks."""
     output_path = os.path.join(DOWNLOAD_DIR, custom_filename)
     
     ydl_opts = get_base_ydl_options()
-
-    # Add flexible resolution fallbacks
-    if "1080" in format_spec:
-        format_spec = "bestvideo[height<=1080]+bestaudio/bestvideo[height<=1080]/best[height<=1080]/best"
-    elif "720" in format_spec:
-        format_spec = "bestvideo[height<=720]+bestaudio/bestvideo[height<=720]/best[height<=720]/best"
-    elif "480" in format_spec:
-        format_spec = "bestvideo[height<=480]+bestaudio/bestvideo[height<=480]/best[height<=480]/best"
-
-    ydl_opts['format'] = format_spec
     ydl_opts['outtmpl'] = output_path
     ydl_opts['overwrites'] = True
 
-    # If audio extraction is requested
-    if format_spec == "bestaudio/best" or "mp3" in custom_filename.lower():
+    # 1. Configure MP3 audio extraction if requested
+    if "mp3" in format_spec.lower() or "mp3" in custom_filename.lower():
+        ydl_opts['format'] = 'ba/bestaudio/b'
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }]
+    else:
+        # 2. Flexible resolution formatting using wildcards
+        if "1080" in format_spec:
+            ydl_opts['format'] = 'bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b'
+        elif "720" in format_spec:
+            ydl_opts['format'] = 'bv*[height<=720]+ba/b[height<=720]/bv*+ba/b'
+        elif "480" in format_spec:
+            ydl_opts['format'] = 'bv*[height<=480]+ba/b[height<=480]/bv*+ba/b'
+        else:
+            ydl_opts['format'] = 'bv*+ba/b/best'
 
-    def _download():
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    def _download(options):
+        with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
         return output_path
 
+    # Try downloading with primary format selection
     try:
-        path = await asyncio.to_thread(_download)
-        
-        if not os.path.exists(path):
-            base_path = os.path.splitext(path)[0]
-            if os.path.exists(f"{base_path}.mp3"):
-                return f"{base_path}.mp3"
-            
-        return path if os.path.exists(path) else None
+        path = await asyncio.to_thread(_download, ydl_opts)
     except Exception as e:
-        print(f"Error downloading media from {url}: {e}")
-        return None
+        print(f"Primary format failed for {url}: {e}. Retrying with universal fallback 'b/best'...")
+        
+        # Fallback attempt if requested quality stream is missing or restricted
+        fallback_opts = get_base_ydl_options()
+        fallback_opts['outtmpl'] = output_path
+        fallback_opts['overwrites'] = True
+        fallback_opts['format'] = 'b/best'
+        
+        if "mp3" in custom_filename.lower():
+            fallback_opts['postprocessors'] = [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }]
+            
+        try:
+            path = await asyncio.to_thread(_download, fallback_opts)
+        except Exception as fallback_err:
+            print(f"Fallback download also failed: {fallback_err}")
+            return None
+
+    # Check file status and handles extension changes by FFmpeg
+    if path and os.path.exists(path):
+        return path
+    
+    base_path = os.path.splitext(output_path)[0]
+    if os.path.exists(f"{base_path}.mp3"):
+        return f"{base_path}.mp3"
+        
+    return None
 
 
 def cleanup_file(file_path: Optional[str]):
