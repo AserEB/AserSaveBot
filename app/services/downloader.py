@@ -52,7 +52,7 @@ def get_ydl_options_for_url(url: str) -> dict:
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['android_vr', 'ios', 'mweb']
+                'player_client': ['android_vr', 'ios', 'mweb', 'android']
             }
         }
 
@@ -92,7 +92,6 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # process=False በመጠቀማችን yt-dlp ፎርማቶችን ለመፈተሽ አይሞክርም
             info = ydl.extract_info(real_url, download=False, process=False)
             if not info:
                 return None
@@ -157,7 +156,7 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media file with fallback options."""
+    """Downloads media file with flexible stream selection (bv*+ba) and audio fallbacks."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -169,7 +168,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     is_audio = "mp3" in format_spec.lower() or "mp3" in custom_filename.lower()
 
     if is_audio:
-        ydl_opts['format'] = 'ba/b/best'
+        ydl_opts['format'] = 'ba/ba*/bestaudio/best'
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -182,7 +181,13 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
                 target_h = h
                 break
 
-        ydl_opts['format'] = f"b[height<={target_h}]/bv*[height<={target_h}]+ba/best[height<={target_h}]/best"
+        # የተስተካከለ፦ ቪዲዮ እና ድምፅን ከየትኛውም ፎርማት አዋህዶ እንዲያወርድ ተደርጓል
+        ydl_opts['format'] = (
+            f"bv*[height<={target_h}]+ba/"
+            f"b[height<={target_h}]/"
+            f"bestvideo[height<={target_h}]+bestaudio/"
+            f"bv*+ba/b/best"
+        )
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -197,14 +202,15 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
         fallback_opts['overwrites'] = True
 
         if is_audio:
-            fallback_opts['format'] = 'bestaudio/best'
+            fallback_opts['format'] = 'ba/bestaudio/best'
             fallback_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }]
         else:
-            fallback_opts['format'] = 'best'
+            # Fallback ላይም ቢሆን 'best' ብቻ ሳይሆን 'bv*+ba' እንዲፈልግ ተደርጓል
+            fallback_opts['format'] = 'bv*+ba/b/best'
 
         try:
             await asyncio.to_thread(_download, fallback_opts)
