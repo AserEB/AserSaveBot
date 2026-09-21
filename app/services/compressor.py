@@ -45,8 +45,7 @@ async def compress_video_to_size(
     if not duration or duration <= 0:
         return None
 
-    # Calculate target bitrate (bits per second)
-    # Total Target Bits = Target MB * 1024 * 1024 * 8
+    # Target Bits = Target MB * 1024 * 1024 * 8
     target_bits = target_size_mb * 1024 * 1024 * 8
     total_bitrate = target_bits / duration
     
@@ -59,7 +58,6 @@ async def compress_video_to_size(
 
     output_path = os.path.splitext(input_path)[0] + "_compressed.mp4"
 
-    # FFmpeg single-pass encode with hard size ceiling
     ffmpeg_cmd = [
         'ffmpeg', '-y',
         '-i', input_path,
@@ -83,3 +81,6 @@ async def compress_video_to_size(
         print(f"Error compressing video with FFmpeg: {e}")
 
     return None
+
+# ማንኛውም ፋይል compress_video ብሎ ቢጠራው እንዳይበላሽ alias ተሰጥቶታል
+compress_video = compress_video_to_size
