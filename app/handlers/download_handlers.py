@@ -145,7 +145,8 @@ async def process_media_download(callback: CallbackQuery):
         "mp3": "ba/ba*/bestaudio/best"
     }
     
-    format_spec = format_map.get(quality, "bv*[height<=360]+ba/b/best")
+    # format_map አላስፈላጊ ገደብ እንዳይፈጥር በቀጥታ quality እንልካለን
+    format_spec = quality 
     ext = "mp3" if quality == "mp3" else "mp4"
     filename = f"{session_id}_{quality}.{ext}"
 
