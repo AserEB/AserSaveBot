@@ -48,15 +48,17 @@ def get_base_ydl_options() -> dict:
         'impersonate': 'chrome'
     }
 
-    cookie_b64 = os.getenv('YOUTUBE_COOKIES_B64')
-    if cookie_b64:
+    # ንጹህ Netscape format cookie ከ Heroku Config Var ለማንበብ
+    cookie_content = os.getenv('YOUTUBE_COOKIES_TXT')
+    if cookie_content:
         cookie_path = '/tmp/youtube_cookies.txt'
         try:
-            raw_bytes = base64.b64decode(cookie_b64)
-            # UTF-8 decode ስህተትን የሚከላከለው ክፍል:
-            clean_text = raw_bytes.decode('utf-8', errors='ignore')
+            # የ Netscape ራስጌ መኖሩን ማረጋገጥ
+            if not cookie_content.startswith('# Netscape'):
+                cookie_content = '# Netscape HTTP Cookie File\n' + cookie_content
+                
             with open(cookie_path, 'w', encoding='utf-8') as f:
-                f.write(clean_text)
+                f.write(cookie_content)
             options['cookiefile'] = cookie_path
         except Exception as e:
             print(f"Error writing cookies: {e}")
