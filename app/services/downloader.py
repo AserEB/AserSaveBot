@@ -47,18 +47,19 @@ def get_ydl_options_for_url(url: str) -> dict:
         'geo_bypass': True,
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
+        'format': 'bestvideo+bestaudio/best',  # Flexible fallback for both muxed and un-muxed streams
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # Multiple client fallback prevents bot detection and format blocks
+        # Reliable YouTube extractor configuration
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['android', 'mweb', 'ios']
+                'player_client': ['android', 'web', 'mweb']
             }
         }
 
@@ -91,11 +92,12 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata without downloading or format restrictions."""
+    """Extracts metadata without format restrictions or validation errors."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
-    ydl_opts['format'] = None  # Removes format filter during info extraction
+    ydl_opts['check_formats'] = False   # ፎርማት ባለመገኘቱ ምክንያት Error እንዳይወረውር ያደርጋል
+    ydl_opts['format'] = 'all'          # ሁሉንም ፎርማቶች እንዲቀበል ያደርጋል
     ydl_opts['extract_flat'] = False
 
     def _extract():
@@ -105,9 +107,17 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
     try:
         return await asyncio.to_thread(_extract)
     except Exception as e:
-        print(f"Error extracting metadata from {url}: {repr(e)}")
-        traceback.print_exc()
-        return None
+        print(f"Primary info extraction failed: {e}. Retrying with flat metadata fallback...")
+        # እጅግ አስተማማኝ የሆነ ሁለተኛ fallback
+        fallback_opts = get_ydl_options_for_url(real_url)
+        fallback_opts['skip_download'] = True
+        fallback_opts['extract_flat'] = True
+        try:
+            with yt_dlp.YoutubeDL(fallback_opts) as ydl:
+                return await asyncio.to_thread(ydl.extract_info, real_url, download=False)
+        except Exception as fe:
+            print(f"Fallback extraction failed: {fe}")
+            return None
 
 
 async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
