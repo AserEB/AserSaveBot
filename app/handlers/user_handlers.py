@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 
@@ -7,9 +7,31 @@ from app.config import config
 from app.core import constants
 from app.database import crud
 from app.keyboards import inline
+from app.services import downloader
 from app.utils import formatting
 
 user_router = Router()
+
+
+# ---------------- GLOBAL CANCEL HANDLER ----------------
+
+@user_router.message(Command("cancel"))
+@user_router.callback_query(F.data == "nav_cancel")
+async def global_cancel_handler(event: Message | CallbackQuery, state: FSMContext):
+    """Cancels any active operation (payment, broadcast, search) and restores main menu."""
+    await state.clear()
+    user_id = event.from_user.id
+    user = crud.get_or_create_user(user_id, event.from_user.full_name or "User")
+    is_admin = user.get("role") == "admin" or user_id in config.ADMIN_IDS
+
+    text = "🚫 <b>Action Cancelled!</b>\n\nReturned to the main dashboard:"
+    reply_markup = inline.get_main_menu_keyboard(is_admin=is_admin)
+
+    if isinstance(event, CallbackQuery):
+        await event.message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
+        await event.answer("Operation cancelled.")
+    else:
+        await event.answer(text, reply_markup=reply_markup, parse_mode="HTML")
 
 
 @user_router.message(CommandStart())
@@ -30,7 +52,51 @@ async def command_start_handler(message: Message, state: FSMContext):
     )
 
 
+# ---------------- INLINE YOUTUBE SEARCH ----------------
+
+@user_router.inline_query()
+async def inline_youtube_search_handler(inline_query: InlineQuery):
+    """Allows searching YouTube videos directly via @AserSaveBot <query> in any chat."""
+    query = inline_query.query.strip()
+    if not query:
+        return
+
+    videos = await downloader.search_youtube_videos(query, max_results=5)
+    articles = []
+
+    for v in videos:
+        duration_str = formatting.format_duration(v.get("duration", 0))
+        caption_preview = f"🎬 {v['title']}\n⏱ Duration: {duration_str}"
+        thumb = v.get("thumbnail") or "https://www.youtube.com/s/desktop/d9c739b6/img/favicon_144x144.png"
+        
+        articles.append(
+            InlineQueryResultArticle(
+                id=str(v["id"]),
+                title=v["title"],
+                description=f"⏱ {duration_str} • {v.get('channel', 'YouTube')}",
+                thumbnail_url=thumb,
+                input_message_content=InputTextMessageContent(
+                    message_text=v["url"]
+                )
+            )
+        )
+
+    await inline_query.answer(articles, cache_time=30, is_personal=True)
+
+
 # ---------------- COMMANDS SECTION ----------------
+
+@user_router.message(Command("search"))
+async def cmd_search(message: Message):
+    bot_info = await message.bot.get_me()
+    await message.answer(
+        "🔎 <b>Inline YouTube Search</b>\n\n"
+        f"You can search YouTube anywhere simply by typing:\n"
+        f"<code>@{bot_info.username} [Video Name]</code>\n\n"
+        "💡 <i>Tap the result and send it to the chat — the bot will immediately offer download resolutions!</i>",
+        parse_mode="HTML"
+    )
+
 
 @user_router.message(Command("youtube"))
 async def cmd_youtube(message: Message):
@@ -120,7 +186,6 @@ async def cmd_status(message: Message):
         remaining_downloads = max(0, constants.FREE_DAILY_DOWNLOAD_LIMIT - downloads_today)
         status_text += f"• <b>Free Downloads Today:</b> {remaining_downloads} / {constants.FREE_DAILY_DOWNLOAD_LIMIT}\n"
         
-        # 24-hour restore countdown calculation
         if remaining_downloads == 0:
             last_dl = user.get("last_download_at")
             countdown = formatting.calculate_next_download_countdown(last_dl)
@@ -185,7 +250,6 @@ async def my_status_handler(callback: CallbackQuery):
         remaining_downloads = max(0, constants.FREE_DAILY_DOWNLOAD_LIMIT - downloads_today)
         status_text += f"• <b>Free Downloads Today:</b> {remaining_downloads} / {constants.FREE_DAILY_DOWNLOAD_LIMIT}\n"
         
-        # 24-hour restore countdown
         if remaining_downloads == 0:
             last_dl = user.get("last_download_at")
             countdown = formatting.calculate_next_download_countdown(last_dl)
@@ -213,6 +277,8 @@ async def bot_version_handler(callback: CallbackQuery):
         "<b>📋 Available Command Shortcuts:</b>\n"
         "• /start — Restart and display main interactive dashboard\n"
         "• /status — Check your download quotas and subscription validity\n"
+        "• /search — Search YouTube directly inside any Telegram chat\n"
+        "• /cancel — Abort any running operation or payment flow\n"
         "• /youtube — Instructions for YouTube & Shorts extraction\n"
         "• /tiktok — Instructions for watermark-free TikTok media\n"
         "• /instagram — Instructions for Instagram Reels & Videos\n"
@@ -246,7 +312,6 @@ async def platform_button_instruction(callback: CallbackQuery):
     msg = (
         f"📥 <b>How to download from {p_name}:</b>\n\n"
         f"Simply copy the video or audio link from {p_name} and paste/send it directly to this chat!\n\n"
-        f"🤞 Or send your video file directly and the bot will compress it!\n\n"
         f"<i>The bot will automatically detect the link and offer download options.</i>"
     )
     await callback.message.edit_text(

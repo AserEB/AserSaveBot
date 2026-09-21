@@ -16,15 +16,17 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 async def set_bot_commands(bot: Bot):
     """Registers command shortcuts in Telegram's Menu button for all users."""
     commands = [
-        BotCommand(command="start", description="Start or restart the bot"),
-        BotCommand(command="status", description="Check account & limit status"),
-        BotCommand(command="youtube", description="Download YouTube & Shorts"),
-        BotCommand(command="tiktok", description="Download TikTok (No Watermark)"),
-        BotCommand(command="instagram", description="Download Instagram Reels"),
-        BotCommand(command="facebook", description="Download Facebook Videos (Premium)"),
-        BotCommand(command="pinterest", description="Download Pinterest Pins (Premium)"),
-        BotCommand(command="compress", description="Video compression information"),
-        BotCommand(command="admin", description="Admin Control Panel"),
+        BotCommand(command="start", description="🚀 Start / Main Dashboard"),
+        BotCommand(command="status", description="📊 Account Quota & Expiry"),
+        BotCommand(command="search", description="🔎 Search YouTube Videos"),
+        BotCommand(command="cancel", description="❌ Cancel Current Process"),
+        BotCommand(command="youtube", description="🎬 Download YouTube & Shorts"),
+        BotCommand(command="tiktok", description="🎵 Download TikTok No-Watermark"),
+        BotCommand(command="instagram", description="📸 Download Instagram Reels"),
+        BotCommand(command="facebook", description="📘 Download Facebook (Premium)"),
+        BotCommand(command="pinterest", description="📌 Download Pinterest (Premium)"),
+        BotCommand(command="compress", description="⚡️ FFmpeg Video Compression"),
+        BotCommand(command="admin", description="👑 Admin Control Center"),
     ]
     try:
         await bot.set_my_commands(commands)
@@ -56,7 +58,7 @@ async def premium_expiry_checker_task(bot: Bot):
                     )
                     
                     kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="⭐ Get Premium", callback_data="btn_get_premium")],
+                        [InlineKeyboardButton(text="⭐ Get Premium", callback_data="btn_get_premium",)],
                         [InlineKeyboardButton(text="💬 Contact Admin", url=support_url)]
                     ])
 

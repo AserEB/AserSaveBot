@@ -3,7 +3,7 @@ import asyncio
 import urllib.request
 import traceback
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import yt_dlp
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,7 +27,6 @@ def resolve_url(url: str) -> str:
             )
             with urllib.request.urlopen(req, timeout=10) as response:
                 resolved = response.geturl()
-                # If redirected to generic landing, extract pin path if available
                 if resolved.rstrip('/') != "https://www.pinterest.com":
                     target_url = resolved
         except Exception as e:
@@ -42,10 +41,9 @@ def resolve_url(url: str) -> str:
 
 def get_ydl_options_for_url(url: str) -> dict:
     """Provides optimized yt-dlp configurations per platform."""
-    # Base configuration
     options = {
-        'quiet': False,
-        'no_warnings': False,
+        'quiet': True,
+        'no_warnings': True,
         'noplaylist': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
@@ -57,7 +55,6 @@ def get_ydl_options_for_url(url: str) -> dict:
         }
     }
 
-    # YouTube Specific Options
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['js_runtimes'] = {'node': {}}
         options['extractor_args'] = {
@@ -79,7 +76,6 @@ def get_ydl_options_for_url(url: str) -> dict:
             except Exception as e:
                 print(f"Error writing cookies: {e}")
 
-    # TikTok Specific Options
     elif "tiktok.com" in url:
         options['extractor_args'] = {
             'tiktok': {
@@ -106,6 +102,43 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
         print(f"Error extracting metadata from {url}: {repr(e)}")
         traceback.print_exc()
         return None
+
+
+async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    """Performs quick YouTube keyword search returning top metadata entries."""
+    search_spec = f"ytsearch{max_results}:{query}"
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': True,
+        'skip_download': True,
+    }
+
+    def _search():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search_spec, download=False)
+            return info.get('entries', []) if info else []
+
+    try:
+        entries = await asyncio.to_thread(_search)
+        results = []
+        for entry in entries:
+            if not entry:
+                continue
+            video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
+            results.append({
+                "id": entry.get("id"),
+                "title": entry.get("title", "YouTube Video"),
+                "url": video_url,
+                "duration": entry.get("duration", 0),
+                "thumbnails": entry.get("thumbnails", []),
+                "thumbnail": entry.get("thumbnails")[-1]["url"] if entry.get("thumbnails") else None,
+                "channel": entry.get("uploader", "YouTube Creator")
+            })
+        return results
+    except Exception as e:
+        print(f"YouTube search error for query '{query}': {e}")
+        return []
 
 
 async def download_media_file(
