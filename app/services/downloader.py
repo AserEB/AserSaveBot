@@ -35,7 +35,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations using clean cookies and client spoofing."""
+    """Provides optimized yt-dlp configurations with stable headers."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -43,9 +43,8 @@ def get_ydl_options_for_url(url: str) -> dict:
         'geo_bypass': True,
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
-        'impersonate': 'chrome',  # curl_cffi በመጠቀም ጥያቄውን የብራውዘር ያስመስላል
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
@@ -53,8 +52,7 @@ def get_ydl_options_for_url(url: str) -> dict:
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['extractor_args'] = {
             'youtube': {
-                # 'ios' እና 'android' የዩቲዩብ ማገጃዎችን ለማለፍ ይረዳሉ
-                'player_client': ['ios', 'android', 'mweb']
+                'player_client': ['android', 'ios']
             }
         }
 
@@ -86,15 +84,14 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata safely with process=False to bypass format selection."""
+    """Extracts metadata safely using standard yt-dlp extraction flow."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
-    ydl_opts['check_formats'] = False
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(real_url, download=False, process=False)
+            info = ydl.extract_info(real_url, download=False)
             if not info:
                 return None
 
@@ -183,7 +180,6 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
                 target_h = h
                 break
 
-        # ተስተካክሏል: ይበልጥ አስተማማኝ የሆነ የ Format ምርጫ ቅደም ተከተል
         ydl_opts['format'] = f"bestvideo[height<={target_h}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={target_h}]+bestaudio/best[height<={target_h}]/best"
 
     def _download(opts):
