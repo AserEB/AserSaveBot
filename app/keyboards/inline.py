@@ -2,15 +2,18 @@ import urllib.parse
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.config import config
 
+
 def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
-    """Builds the main interactive keyboard for users."""
+    """Builds the main interactive keyboard for users with inline search shortcut."""
     
-    # Draft support URL for Contact Us
     draft_text = "Hi Aser Support I need to talk to you about..."
     encoded_draft = urllib.parse.quote(draft_text)
     support_url = f"https://t.me/{config.SUPPORT_USERNAME}?text={encoded_draft}"
 
     buttons = [
+        [
+            InlineKeyboardButton(text="🔎 Search YouTube Videos", switch_inline_query_current_chat="")
+        ],
         [
             InlineKeyboardButton(text="🎬 YouTube", callback_data="btn_yt"),
             InlineKeyboardButton(text="🎵 TikTok", callback_data="btn_tiktok")
@@ -43,7 +46,7 @@ def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
 
 
 def get_download_options_keyboard(video_id: str, is_premium: bool = False) -> InlineKeyboardMarkup:
-    """Builds media quality choices for download (1080p, 720p, 480p, MP3 Audio)."""
+    """Builds media quality choices for download (1080p, 720p, 480p, 360p, MP3 Audio, Thumbnail)."""
     buttons = [
         [
             InlineKeyboardButton(
@@ -61,11 +64,15 @@ def get_download_options_keyboard(video_id: str, is_premium: bool = False) -> In
                 callback_data=f"dl:480:{video_id}"
             ),
             InlineKeyboardButton(
-                text="🎵 MP3 Audio", 
-                callback_data=f"dl:mp3:{video_id}"
+                text="📹 360p SD (Low MB)", 
+                callback_data=f"dl:360:{video_id}"
             )
         ],
         [
+            InlineKeyboardButton(
+                text="🎵 MP3 Audio", 
+                callback_data=f"dl:mp3:{video_id}"
+            ),
             InlineKeyboardButton(
                 text="🖼️ Thumbnail " + ("" if is_premium else "🔒 (Premium)"), 
                 callback_data=f"dl:thumb:{video_id}"
@@ -128,44 +135,22 @@ def get_navigation_keyboard(back_to: str = "home") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
-    """Builds the main interactive keyboard for users with inline search shortcut."""
-    
-    draft_text = "Hi Aser Support I need to talk to you about..."
-    encoded_draft = urllib.parse.quote(draft_text)
-    support_url = f"https://t.me/{config.SUPPORT_USERNAME}?text={encoded_draft}"
-
+def get_admin_dashboard_keyboard() -> InlineKeyboardMarkup:
+    """Admin Management Dashboard buttons."""
     buttons = [
         [
-            # ልክ በምስሉ ላይ እንዳለው ተጠቃሚው ሲጫነው የፍለጋ መስኮቱን ወዲያውኑ ይከፍታል
-            InlineKeyboardButton(text="🔎 Search YouTube Videos", switch_inline_query_current_chat="")
+            InlineKeyboardButton(text="📊 Detailed Statistics", callback_data="adm_stats"),
+            InlineKeyboardButton(text="📤 Send Broadcast", callback_data="adm_broadcast")
         ],
         [
-            InlineKeyboardButton(text="🎬 YouTube", callback_data="btn_yt"),
-            InlineKeyboardButton(text="🎵 TikTok", callback_data="btn_tiktok")
+            InlineKeyboardButton(text="📥 Export Premium (CSV)", callback_data="adm_exp_prem"),
+            InlineKeyboardButton(text="📥 Export All Users (CSV)", callback_data="adm_exp_all")
         ],
         [
-            InlineKeyboardButton(text="📸 Instagram", callback_data="btn_ig"),
-            InlineKeyboardButton(text="📘 Facebook", callback_data="btn_fb")
+            InlineKeyboardButton(text="📥 Export Discarded (CSV)", callback_data="adm_exp_disc")
         ],
         [
-            InlineKeyboardButton(text="📌 Pinterest", callback_data="btn_pin"),
-            InlineKeyboardButton(text="⚡ Compress Video", callback_data="btn_compress")
-        ],
-        [
-            InlineKeyboardButton(text="📊 My Status", callback_data="btn_status"),
-            InlineKeyboardButton(text="⭐ Get Premium", callback_data="btn_get_premium")
-        ],
-        [
-            InlineKeyboardButton(text="ℹ️ About Us", callback_data="btn_about"),
-            InlineKeyboardButton(text="💬 Contact Support", url=support_url)
-        ],
-        [
-            InlineKeyboardButton(text="ℹ️ Bot Version (v1.0)", callback_data="btn_version")
+            InlineKeyboardButton(text="🔙 Back to Main Menu", callback_data="nav_home")
         ]
     ]
-
-    if is_admin:
-        buttons.append([InlineKeyboardButton(text="⚙️ Admin Dashboard", callback_data="admin_dashboard")])
-
     return InlineKeyboardMarkup(inline_keyboard=buttons)
