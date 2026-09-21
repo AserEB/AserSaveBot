@@ -186,10 +186,11 @@ async def cmd_status(message: Message):
         remaining_downloads = max(0, constants.FREE_DAILY_DOWNLOAD_LIMIT - downloads_today)
         status_text += f"• <b>Free Downloads Today:</b> {remaining_downloads} / {constants.FREE_DAILY_DOWNLOAD_LIMIT}\n"
         
+        # ትክክለኛውን last_download_date እዚህ እንወስዳለን
         if remaining_downloads == 0:
-            last_dl = user.get("last_download_at")
+            last_dl = user.get("last_download_date") or user.get("last_download_at")
             countdown = formatting.calculate_next_download_countdown(last_dl)
-            status_text += f"• <b>Next Free Download:</b> {countdown}\n"
+            status_text += f"• <b>Next Free Download in:</b> {countdown}\n"
 
     status_text += f"• <b>Total Lifetime Downloads:</b> {user.get('total_downloads', 0)}\n"
 
@@ -250,10 +251,11 @@ async def my_status_handler(callback: CallbackQuery):
         remaining_downloads = max(0, constants.FREE_DAILY_DOWNLOAD_LIMIT - downloads_today)
         status_text += f"• <b>Free Downloads Today:</b> {remaining_downloads} / {constants.FREE_DAILY_DOWNLOAD_LIMIT}\n"
         
+        # ትክክለኛውን last_download_date እዚህ እንወስዳለን
         if remaining_downloads == 0:
-            last_dl = user.get("last_download_at")
+            last_dl = user.get("last_download_date") or user.get("last_download_at")
             countdown = formatting.calculate_next_download_countdown(last_dl)
-            status_text += f"• <b>Next Free Download:</b> {countdown}\n"
+            status_text += f"• <b>Next Free Download in:</b> {countdown}\n"
 
     status_text += f"• <b>Total Lifetime Downloads:</b> {user.get('total_downloads', 0)}\n"
 
