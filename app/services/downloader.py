@@ -91,10 +91,12 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata without format restrictions."""
+    """Extracts metadata purely without enforcing format requirements."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
+    ydl_opts['extract_flat'] = True       # ፎርማት ሳይፈልግ metadata ብቻ እንዲያወጣ ያደርገዋል
+    ydl_opts['check_formats'] = False      # Format unavailable errorን ያስቀራል
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
