@@ -17,6 +17,7 @@ def get_base_ydl_options() -> dict:
         'geo_bypass': True,
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
+        'js_runtimes': ['node'],
     }
 
 
