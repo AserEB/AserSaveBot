@@ -35,7 +35,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Configures yt-dlp with cookie detection and mobile clients."""
+    """Provides optimized yt-dlp configurations using clean cookies."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -44,21 +44,19 @@ def get_ydl_options_for_url(url: str) -> dict:
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # mweb + ios bypass bot challenges reliably
+        # mweb and android work perfectly when authentic cookies are present
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb', 'ios'],
-                'player_skip': ['webpage', 'configs']
+                'player_client': ['mweb', 'android']
             }
         }
 
-        # 1. Heroku Config Var Cookie
         env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
         local_cookie = os.path.join(BASE_DIR, "cookies.txt")
 
@@ -71,14 +69,10 @@ def get_ydl_options_for_url(url: str) -> dict:
                 with open(cookie_path, 'w', encoding='utf-8') as f:
                     f.write(content)
                 options['cookiefile'] = cookie_path
-                print(f"[COOKIE CHECK] Loaded cookie from Heroku ENV (size: {len(content)} chars)")
             except Exception as e:
-                print(f"[COOKIE CHECK] Error writing env cookie: {e}")
+                print(f"Error writing env cookie: {e}")
         elif os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
             options['cookiefile'] = local_cookie
-            print(f"[COOKIE CHECK] Loaded cookie from local cookies.txt (size: {os.path.getsize(local_cookie)} bytes)")
-        else:
-            print("[COOKIE CHECK] WARNING: No valid cookie file found!")
 
     elif "tiktok.com" in url:
         options['extractor_args'] = {
@@ -117,7 +111,7 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media file with strict height constraints."""
+    """Downloads media file with strict resolution controls (1080, 720, 480, 360, 240, 144, mp3)."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -136,14 +130,13 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
             'preferredquality': '192',
         }]
     else:
-        # Determine exact target height
         target_h = "360"
         for h in ["1080", "720", "480", "360", "240", "144"]:
             if h in format_spec:
                 target_h = h
                 break
         
-        ydl_opts['format'] = f"best[height<={target_h}]/bestvideo[height<={target_h}]+bestaudio/best"
+        ydl_opts['format'] = f"bv*[height<={target_h}]+ba/b[height<={target_h}]/best[height<={target_h}]/best"
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -152,7 +145,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     try:
         await asyncio.to_thread(_download, ydl_opts)
     except Exception as e:
-        print(f"Download failed: {e}. Trying single stream fallback...")
+        print(f"Download failed: {e}. Trying fallback...")
         fallback_opts = get_ydl_options_for_url(real_url)
         fallback_opts['outtmpl'] = outtmpl_pattern
         fallback_opts['overwrites'] = True
@@ -160,7 +153,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
         try:
             await asyncio.to_thread(_download, fallback_opts)
         except Exception as fe:
-            print(f"Fallback download failed: {fe}")
+            print(f"Fallback failed: {fe}")
             return None
 
     if is_audio:
