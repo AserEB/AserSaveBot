@@ -39,7 +39,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations with comprehensive player clients."""
+    """Provides optimized yt-dlp configurations with complete stream format parsing."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -55,10 +55,10 @@ def get_ydl_options_for_url(url: str) -> dict:
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # ios, mweb, and android combined unlock all streams (1080p down to 144p + direct MP3)
+        # web and mweb guarantee standard video formats (1080p, 720p, 480p, 360p, 240p, 144p)
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['ios', 'mweb', 'android']
+                'player_client': ['web', 'mweb', 'android']
             }
         }
 
@@ -166,7 +166,7 @@ async def download_media_file(
     format_spec: str, 
     custom_filename: str
 ) -> Optional[str]:
-    """Downloads media file with flexible format selectors that gracefully match any stream."""
+    """Downloads media file with robust resolution sorting and universal fallbacks."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -184,20 +184,17 @@ async def download_media_file(
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }]
-    elif "1080" in format_spec:
-        ydl_opts['format'] = 'bv*[height<=1080]+ba/b[height<=1080]/best'
-    elif "720" in format_spec:
-        ydl_opts['format'] = 'bv*[height<=720]+ba/b[height<=720]/best'
-    elif "480" in format_spec:
-        ydl_opts['format'] = 'bv*[height<=480]+ba/b[height<=480]/best'
-    elif "360" in format_spec:
-        ydl_opts['format'] = 'bv*[height<=360]+ba/b[height<=360]/best'
-    elif "240" in format_spec:
-        ydl_opts['format'] = 'bv*[height<=240]+ba/b[height<=240]/best'
-    elif "144" in format_spec:
-        ydl_opts['format'] = 'bv*[height<=144]+ba/b[height<=144]/best'
     else:
-        ydl_opts['format'] = 'b/best'
+        # Determine exact height constraint
+        target_height = "360"
+        for h in ["1080", "720", "480", "360", "240", "144"]:
+            if h in format_spec:
+                target_height = h
+                break
+        
+        # Priority: best matching height -> combined format -> any available stream
+        ydl_opts['format'] = f"bestvideo[height<={target_height}]+bestaudio/best[height<={target_height}]/best"
+        ydl_opts['format_sort'] = [f"res:{target_height}", "ext:mp4:m4a"]
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -219,7 +216,7 @@ async def download_media_file(
                 'preferredquality': '192',
             }]
         else:
-            fallback_opts['format'] = 'b/best'
+            fallback_opts['format'] = 'best'
         
         try:
             await asyncio.to_thread(_download, fallback_opts)
