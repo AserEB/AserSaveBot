@@ -2,6 +2,7 @@ import os
 import uuid
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.exceptions import TelegramBadRequest, TelegramEntityTooLarge
 
 from app import config
 from app.core import constants
@@ -12,7 +13,6 @@ from app.utils import formatting, validators
 
 download_router = Router()
 
-# In-memory session metadata for active download requests
 DOWNLOAD_SESSIONS = {}
 
 
@@ -94,7 +94,7 @@ async def handle_url_message(message: Message):
 @download_router.callback_query(F.data.startswith("dl:"))
 async def process_media_download(callback: CallbackQuery):
     """Handles selected resolution download, applies file compression if needed, and delivers file."""
-    # 1. ወዲያውኑ callback መመለስ (timeout እንዳይፈጠር)
+    # Timeout እንዳይፈጠር callback ወዲያውኑ answer ይደረጋል
     try:
         await callback.answer()
     except Exception:
@@ -135,13 +135,17 @@ async def process_media_download(callback: CallbackQuery):
 
     await callback.message.edit_text("⏳ <i>Downloading media file to server... 📊 [████░░░░░░] 40%</i>", parse_mode="HTML")
 
+    # ጥብቅ የጥራት ካርታ (Fallback እንዳያመልጥ)
     format_map = {
-        "1080": "bestvideo[height<=1080]+bestaudio/best",
-        "720": "bestvideo[height<=720]+bestaudio/best",
-        "480": "bestvideo[height<=480]+bestaudio/best",
-        "mp3": "bestaudio/best"
+        "1080": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "720": "bestvideo[height<=720]+bestaudio/best[height<=720]",
+        "480": "bestvideo[height<=480]+bestaudio/best[height<=480]",
+        "360": "bestvideo[height<=360]+bestaudio/best[height<=360]",
+        "240": "bestvideo[height<=240]+bestaudio/best[height<=240]",
+        "144": "bestvideo[height<=144]+bestaudio/best[height<=144]",
+        "mp3": "ba/b"
     }
-    format_spec = format_map.get(quality, "best")
+    format_spec = format_map.get(quality, "bestvideo[height<=360]+bestaudio/best[height<=360]")
     ext = "mp3" if quality == "mp3" else "mp4"
     filename = f"{session_id}_{quality}.{ext}"
 
@@ -154,19 +158,24 @@ async def process_media_download(callback: CallbackQuery):
 
     file_size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
 
-    # 46MB በላይ ከሆነ ለቴሌግራም አስጊ ስለሆነ ኮምፕረስ ማድረግ
-    if file_size_mb > 46.0 and quality != "mp3":
+    # 48MB በላይ ከሆነ ለቴሌግራም ቦት ማስጠንቀቂያ መስጠት
+    if file_size_mb > 48.0 and quality != "mp3":
         if not is_premium:
             downloader.cleanup_file(downloaded_path)
+            
+            # ተጠቃሚው በቀጥታ ዝቅተኛ ጥራት እንዲመርጥ አዝራሮቹን መልሶ ማቅረብ
             await callback.message.edit_text(
-                "⚠️ File exceeds Telegram's 50MB free limit!\n\n"
-                "⭐️ Upgrade to Premium to enable automatic video compression!"
+                f"⚠️ <b>The video quality MB is high ({file_size_mb:.1f} MB)!</b>\n\n"
+                f"Telegram restricts free bots from uploading files larger than <b>50MB</b>.\n\n"
+                f"👇 <b>Please choose a lower quality (360p, 240p, 144p, or MP3) below:</b>",
+                reply_markup=inline.get_download_options_keyboard(session_id, is_premium=False),
+                parse_mode="HTML"
             )
-            DOWNLOAD_SESSIONS.pop(session_id, None)
             return
 
-        await callback.message.edit_text("⚡️ <i>File size exceeds safe Telegram limit. Compressing with FFmpeg... 📊</i>", parse_mode="HTML")
-        compressed_path = await compressor.compress_video_to_size(downloaded_path, target_size_mb=43.0)
+        # ለ Premium ተጠቃሚዎች በጥብቅ ከ 40MB በታች ኮምፕረስ ማድረግ
+        await callback.message.edit_text("⚡️ <i>File exceeds 50MB. Compressing strictly under 40MB with FFmpeg... 📊</i>", parse_mode="HTML")
+        compressed_path = await compressor.compress_video_to_size(downloaded_path, target_size_mb=40.0)
         downloader.cleanup_file(downloaded_path)
         downloaded_path = compressed_path
 
@@ -189,13 +198,21 @@ async def process_media_download(callback: CallbackQuery):
         crud.record_successful_download(callback.from_user.id, action_type=session.get("platform", "media"))
         await callback.message.delete()
 
+    except (TelegramBadRequest, TelegramEntityTooLarge) as te:
+        if "too large" in str(te).lower() or "entity too large" in str(te).lower():
+            await callback.message.answer(
+                f"⚠️ <b>The video quality MB is high!</b>\n\n"
+                f"Telegram rejected this file. Please choose a lower quality below 👇",
+                reply_markup=inline.get_download_options_keyboard(session_id, is_premium=is_premium),
+                parse_mode="HTML"
+            )
+        else:
+            await callback.message.answer(f"❌ Upload error: {str(te)}")
     except Exception as e:
         await callback.message.answer(f"❌ Upload error: {str(e)}")
     finally:
         downloader.cleanup_file(downloaded_path)
         DOWNLOAD_SESSIONS.pop(session_id, None)
-
-    await callback.answer()
 
 
 # ---------------- USER DIRECT VIDEO COMPRESSION ----------------
@@ -224,7 +241,6 @@ async def handle_user_video_upload(message: Message):
     file_size = getattr(video_obj, "file_size", 0) or 0
     original_size_mb = file_size / (1024 * 1024)
 
-    # Telegram Bot API የ 20MB ገደብ አለው
     if original_size_mb > 20.0:
         await message.answer(
             f"⚠️ <b>File is too large ({original_size_mb:.1f} MB)!</b>\n\n"
@@ -248,7 +264,6 @@ async def handle_user_video_upload(message: Message):
         
         await status_msg.edit_text("⚡️ <i>Compressing video with FFmpeg... 📊</i>", parse_mode="HTML")
         
-        # ከ 20MB በታች ያለውን ፋይል መጠኑን ይበልጥ በማሳነስ (ለምሳሌ ወደ 8MB) ማዘጋጀት
         target_mb = max(2.0, original_size_mb * 0.5)
         compressed_path = await compressor.compress_video_to_size(local_input_path, target_size_mb=target_mb)
         
