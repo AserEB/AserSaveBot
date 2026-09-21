@@ -47,7 +47,6 @@ def get_ydl_options_for_url(url: str) -> dict:
         'geo_bypass': True,
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
-        'format': 'bestvideo+bestaudio/best',  # Flexible fallback for both muxed and un-muxed streams
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
@@ -56,14 +55,13 @@ def get_ydl_options_for_url(url: str) -> dict:
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # Reliable YouTube extractor configuration
+        # android_vr and tvhtml5 have no bot check challenges on datacenter IPs
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['android', 'web', 'mweb']
+                'player_client': ['android_vr', 'tvhtml5', 'android']
             }
         }
 
-        # Check for cookies file
         local_cookie_path = os.path.join(BASE_DIR, "cookies.txt")
         env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
 
@@ -92,32 +90,35 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata without format restrictions or validation errors."""
+    """Extracts metadata without triggering format or bot verification failures."""
     real_url = resolve_url(url)
+    
+    # 1. Primary extraction with flat format
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
-    ydl_opts['check_formats'] = False   # ፎርማት ባለመገኘቱ ምክንያት Error እንዳይወረውር ያደርጋል
-    ydl_opts['format'] = 'all'          # ሁሉንም ፎርማቶች እንዲቀበል ያደርጋል
-    ydl_opts['extract_flat'] = False
+    ydl_opts['extract_flat'] = True
 
-    def _extract():
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    def _extract(opts):
+        with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(real_url, download=False)
 
     try:
-        return await asyncio.to_thread(_extract)
+        data = await asyncio.to_thread(_extract, ydl_opts)
+        if data:
+            return data
     except Exception as e:
-        print(f"Primary info extraction failed: {e}. Retrying with flat metadata fallback...")
-        # እጅግ አስተማማኝ የሆነ ሁለተኛ fallback
-        fallback_opts = get_ydl_options_for_url(real_url)
-        fallback_opts['skip_download'] = True
-        fallback_opts['extract_flat'] = True
-        try:
-            with yt_dlp.YoutubeDL(fallback_opts) as ydl:
-                return await asyncio.to_thread(ydl.extract_info, real_url, download=False)
-        except Exception as fe:
-            print(f"Fallback extraction failed: {fe}")
-            return None
+        print(f"Flat info extraction failed: {e}. Retrying full extract...")
+
+    # 2. Fallback full extract without check_formats
+    fallback_opts = get_ydl_options_for_url(real_url)
+    fallback_opts['skip_download'] = True
+    fallback_opts['check_formats'] = False
+
+    try:
+        return await asyncio.to_thread(_extract, fallback_opts)
+    except Exception as fe:
+        print(f"Fallback extraction failed: {fe}")
+        return None
 
 
 async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -183,17 +184,17 @@ async def download_media_file(
     elif "1080" in format_spec:
         ydl_opts['format'] = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
     elif "720" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]'
+        ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
     elif "480" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]'
+        ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
     elif "360" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=360]+bestaudio/best[height<=360]'
-    elif "240" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=240]+bestaudio/best[height<=240]'
-    elif "144" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=144]+bestaudio/best[height<=144]'
-    else:
         ydl_opts['format'] = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
+    elif "240" in format_spec:
+        ydl_opts['format'] = 'bestvideo[height<=240]+bestaudio/best[height<=240]/best'
+    elif "144" in format_spec:
+        ydl_opts['format'] = 'bestvideo[height<=144]+bestaudio/best[height<=144]/best'
+    else:
+        ydl_opts['format'] = 'best'
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -202,7 +203,7 @@ async def download_media_file(
     try:
         await asyncio.to_thread(_download, ydl_opts)
     except Exception as e:
-        print(f"Primary download failed: {e}. Retrying with strict single stream fallback...")
+        print(f"Primary download failed: {e}. Retrying with universal fallback...")
         fallback_opts = get_ydl_options_for_url(real_url)
         fallback_opts['outtmpl'] = outtmpl_pattern
         fallback_opts['overwrites'] = True
@@ -215,15 +216,15 @@ async def download_media_file(
                 'preferredquality': '192',
             }]
         elif "144" in format_spec:
-            fallback_opts['format'] = 'best[height<=144]'
+            fallback_opts['format'] = 'best[height<=144]/best'
         elif "240" in format_spec:
-            fallback_opts['format'] = 'best[height<=240]'
+            fallback_opts['format'] = 'best[height<=240]/best'
         elif "360" in format_spec:
-            fallback_opts['format'] = 'best[height<=360]'
+            fallback_opts['format'] = 'best[height<=360]/best'
         elif "480" in format_spec:
-            fallback_opts['format'] = 'best[height<=480]'
+            fallback_opts['format'] = 'best[height<=480]/best'
         elif "720" in format_spec:
-            fallback_opts['format'] = 'best[height<=720]'
+            fallback_opts['format'] = 'best[height<=720]/best'
         else:
             fallback_opts['format'] = 'best'
 
