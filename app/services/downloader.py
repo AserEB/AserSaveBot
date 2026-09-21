@@ -35,7 +35,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations with stable headers."""
+    """Provides optimized yt-dlp configurations bypassing IP restrictions."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -52,7 +52,7 @@ def get_ydl_options_for_url(url: str) -> dict:
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['android', 'ios']
+                'player_client': ['android_vr', 'ios', 'mweb']
             }
         }
 
@@ -84,14 +84,16 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata safely using standard yt-dlp extraction flow."""
+    """Extracts metadata safely with process=False to completely bypass format checks."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
+    ydl_opts['check_formats'] = False
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(real_url, download=False)
+            # process=False በመጠቀማችን yt-dlp ፎርማቶችን ለመፈተሽ አይሞክርም
+            info = ydl.extract_info(real_url, download=False, process=False)
             if not info:
                 return None
 
@@ -155,7 +157,7 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media file with universal format fallback to prevent unavailable format errors."""
+    """Downloads media file with fallback options."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -167,7 +169,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     is_audio = "mp3" in format_spec.lower() or "mp3" in custom_filename.lower()
 
     if is_audio:
-        ydl_opts['format'] = 'ba/b'
+        ydl_opts['format'] = 'ba/b/best'
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -180,7 +182,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
                 target_h = h
                 break
 
-        ydl_opts['format'] = f"bestvideo[height<={target_h}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={target_h}]+bestaudio/best[height<={target_h}]/best"
+        ydl_opts['format'] = f"b[height<={target_h}]/bv*[height<={target_h}]+ba/best[height<={target_h}]/best"
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
