@@ -41,32 +41,30 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations per platform (Restored to exact working config)."""
+    """Provides optimized yt-dlp configurations per platform."""
     options = {
-        'quiet': False,
-        'no_warnings': False,
+        'quiet': True,
+        'no_warnings': True,
         'noplaylist': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
     }
 
-    # YouTube Specific Options - መጀመሪያ ሲሰራ የነበረው ትክክለኛው ሴቲንግ
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        options['js_runtimes'] = {'node': {}}
+        # mweb እና ios በዳታሴንተር አይፒ ላይ የቦት ፈተና የመጠየቅ እድላቸው እጅግ አነስተኛ ነው
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['android_vr', 'tv_downgraded', 'mweb']
+                'player_client': ['mweb', 'ios'],
+                'player_skip': ['webpage', 'configs']
             }
         }
-        options['http_headers']['User-Agent'] = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36'
         
-        # Check cookies
         local_cookie = os.path.join(BASE_DIR, "cookies.txt")
         env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
         
@@ -75,15 +73,15 @@ def get_ydl_options_for_url(url: str) -> dict:
         elif env_cookie:
             cookie_path = '/tmp/youtube_cookies.txt'
             try:
-                if not env_cookie.startswith('# Netscape'):
-                    env_cookie = '# Netscape HTTP Cookie File\n' + env_cookie
+                content = env_cookie.strip()
+                if not content.startswith('# Netscape'):
+                    content = '# Netscape HTTP Cookie File\n' + content
                 with open(cookie_path, 'w', encoding='utf-8') as f:
-                    f.write(env_cookie)
+                    f.write(content)
                 options['cookiefile'] = cookie_path
             except Exception as e:
                 print(f"Error writing cookies: {e}")
 
-    # TikTok Specific Options
     elif "tiktok.com" in url:
         options['extractor_args'] = {
             'tiktok': {
