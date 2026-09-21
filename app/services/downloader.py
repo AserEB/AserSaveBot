@@ -44,18 +44,19 @@ def get_base_ydl_options() -> dict:
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
-        }
+        },
+        'impersonate': 'chrome'
     }
-
-    # curl_cffi በመጠቀም TLS Fingerprinting እንዳይታወቅ ማድረግ
-    options['impersonate'] = 'chrome'
 
     cookie_b64 = os.getenv('YOUTUBE_COOKIES_B64')
     if cookie_b64:
         cookie_path = '/tmp/youtube_cookies.txt'
         try:
-            with open(cookie_path, 'wb') as f:
-                f.write(base64.b64decode(cookie_b64))
+            raw_bytes = base64.b64decode(cookie_b64)
+            # UTF-8 decode ስህተትን የሚከላከለው ክፍል:
+            clean_text = raw_bytes.decode('utf-8', errors='ignore')
+            with open(cookie_path, 'w', encoding='utf-8') as f:
+                f.write(clean_text)
             options['cookiefile'] = cookie_path
         except Exception as e:
             print(f"Error writing cookies: {e}")
