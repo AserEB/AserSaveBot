@@ -35,7 +35,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations using Netscape cookies."""
+    """Provides optimized yt-dlp configurations using clean cookies."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -84,7 +84,7 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata safely with process=False to completely bypass format checks."""
+    """Extracts metadata safely with process=False to bypass format selection."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
@@ -92,7 +92,6 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # process=False stops yt-dlp from attempting to resolve/match video stream formats
             info = ydl.extract_info(real_url, download=False, process=False)
             if not info:
                 return None
@@ -157,7 +156,7 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media file matching inline keyboard options (1080, 720, 480, 360, 240, 144, mp3)."""
+    """Downloads media file with universal format fallback to prevent unavailable format errors."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -176,19 +175,14 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
             'preferredquality': '192',
         }]
     else:
-        # Determine exact target resolution
         target_h = "360"
         for h in ["1080", "720", "480", "360", "240", "144"]:
             if h in format_spec:
                 target_h = h
                 break
 
-        # Comprehensive fallback ensuring a stream is always selected
-        ydl_opts['format'] = (
-            f"bestvideo[height<={target_h}]+bestaudio/best[height<={target_h}]/"
-            f"bv*[height<={target_h}]+ba/b[height<={target_h}]/best"
-        )
-        ydl_opts['format_sort'] = [f"res:{target_h}", "ext:mp4:m4a"]
+        # Flexible format selector: tries combined stream first, then separates, then any matching height
+        ydl_opts['format'] = f"b[height<={target_h}]/bv*[height<={target_h}]+ba/best[height<={target_h}]/best"
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -197,7 +191,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     try:
         await asyncio.to_thread(_download, ydl_opts)
     except Exception as e:
-        print(f"Primary download failed: {e}. Retrying with universal single stream fallback...")
+        print(f"Primary download failed: {e}. Retrying with universal fallback...")
         fallback_opts = get_ydl_options_for_url(real_url)
         fallback_opts['outtmpl'] = outtmpl_pattern
         fallback_opts['overwrites'] = True

@@ -5,4 +5,3 @@ python-dotenv>=1.0.1
 pydantic-settings>=2.2.1
 aiohttp>=3.9.3
 curl_cffi
-yt-dlp-youtube-oauth2
