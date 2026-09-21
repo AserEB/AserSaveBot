@@ -94,7 +94,6 @@ async def handle_url_message(message: Message):
 @download_router.callback_query(F.data.startswith("dl:"))
 async def process_media_download(callback: CallbackQuery):
     """Handles selected resolution download, applies file compression if needed, and delivers file."""
-    # Timeout እንዳይፈጠር callback ወዲያውኑ answer ይደረጋል
     try:
         await callback.answer()
     except Exception:
@@ -135,17 +134,17 @@ async def process_media_download(callback: CallbackQuery):
 
     await callback.message.edit_text("⏳ <i>Downloading media file to server... 📊 [████░░░░░░] 40%</i>", parse_mode="HTML")
 
-    # ጥብቅ የጥራት ካርታ (Fallback እንዳያመልጥ)
+    # የተስተካከለ እና ፎርማት እንዳይጠፋ የሚያረጋግጥ Format Map
     format_map = {
-        "1080": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-        "720": "bestvideo[height<=720]+bestaudio/best[height<=720]",
-        "480": "bestvideo[height<=480]+bestaudio/best[height<=480]",
-        "360": "bestvideo[height<=360]+bestaudio/best[height<=360]",
-        "240": "bestvideo[height<=240]+bestaudio/best[height<=240]",
-        "144": "bestvideo[height<=144]+bestaudio/best[height<=144]",
+        "1080": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bv*[height<=1080]+ba/b/best",
+        "720": "bestvideo[height<=720]+bestaudio/best[height<=720]/bv*[height<=720]+ba/b/best",
+        "480": "bestvideo[height<=480]+bestaudio/best[height<=480]/bv*[height<=480]+ba/b/best",
+        "360": "bestvideo[height<=360]+bestaudio/best[height<=360]/bv*[height<=360]+ba/b/best",
+        "240": "bestvideo[height<=240]+bestaudio/best[height<=240]/bv*[height<=240]+ba/b/best",
+        "144": "bestvideo[height<=144]+bestaudio/best[height<=144]/bv*[height<=144]+ba/b/best",
         "mp3": "ba/b"
     }
-    format_spec = format_map.get(quality, "bestvideo[height<=360]+bestaudio/best[height<=360]")
+    format_spec = format_map.get(quality, "bestvideo[height<=360]+bestaudio/best[height<=360]/best")
     ext = "mp3" if quality == "mp3" else "mp4"
     filename = f"{session_id}_{quality}.{ext}"
 
@@ -162,8 +161,6 @@ async def process_media_download(callback: CallbackQuery):
     if file_size_mb > 48.0 and quality != "mp3":
         if not is_premium:
             downloader.cleanup_file(downloaded_path)
-            
-            # ተጠቃሚው በቀጥታ ዝቅተኛ ጥራት እንዲመርጥ አዝራሮቹን መልሶ ማቅረብ
             await callback.message.edit_text(
                 f"⚠️ <b>The video quality MB is high ({file_size_mb:.1f} MB)!</b>\n\n"
                 f"Telegram restricts free bots from uploading files larger than <b>50MB</b>.\n\n"
@@ -261,12 +258,12 @@ async def handle_user_video_upload(message: Message):
     try:
         file_info = await message.bot.get_file(video_obj.file_id)
         await message.bot.download_file(file_info.file_path, destination=local_input_path)
-        
+
         await status_msg.edit_text("⚡️ <i>Compressing video with FFmpeg... 📊</i>", parse_mode="HTML")
-        
+
         target_mb = max(2.0, original_size_mb * 0.5)
         compressed_path = await compressor.compress_video_to_size(local_input_path, target_size_mb=target_mb)
-        
+
         if not compressed_path or not os.path.exists(compressed_path):
             await status_msg.edit_text("❌ Video compression failed. The format might not be supported.")
             return
