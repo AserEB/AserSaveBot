@@ -1,4 +1,5 @@
 import os
+import base64
 import asyncio
 from typing import Dict, Any, Optional
 import yt_dlp
@@ -10,7 +11,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def get_base_ydl_options() -> dict:
     """Base yt-dlp options shared by all supported platforms."""
-    return {
+    options = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
@@ -18,8 +19,16 @@ def get_base_ydl_options() -> dict:
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'js_runtimes': {'node': {}},
-        'cookiefile': 'cookies.txt',
     }
+
+    cookie_b64 = os.getenv('YOUTUBE_COOKIES_B64')
+    if cookie_b64:
+        cookie_path = '/tmp/youtube_cookies.txt'
+        with open(cookie_path, 'wb') as f:
+            f.write(base64.b64decode(cookie_b64))
+        options['cookiefile'] = cookie_path
+
+    return options
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
