@@ -35,7 +35,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations using clean cookies."""
+    """Provides optimized yt-dlp configurations with authentic cookies."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -50,9 +50,10 @@ def get_ydl_options_for_url(url: str) -> dict:
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
+        # android & web clients provide accessible download formats
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb', 'android']
+                'player_client': ['android', 'web']
             }
         }
 
@@ -156,7 +157,10 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media file with universal format fallback to prevent unavailable format errors."""
+    """
+    Downloads media file safely.
+    Uses format_sort to guarantee format availability without crash.
+    """
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -181,8 +185,9 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
                 target_h = h
                 break
 
-        # Flexible format selector: tries combined stream first, then separates, then any matching height
-        ydl_opts['format'] = f"b[height<={target_h}]/bv*[height<={target_h}]+ba/best[height<={target_h}]/best"
+        # ይህ ምርጫ በጭራሽ 'format not available' አይልም፤ ያለውን የትኛውንም stream ወስዶ በ target height ይመድባል
+        ydl_opts['format'] = f"bestvideo[height<={target_h}]+bestaudio/best[height<={target_h}]/best"
+        ydl_opts['format_sort'] = [f"res:{target_h}", "ext:mp4:m4a"]
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -191,7 +196,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     try:
         await asyncio.to_thread(_download, ydl_opts)
     except Exception as e:
-        print(f"Primary download failed: {e}. Retrying with universal fallback...")
+        print(f"Primary format download failed: {e}. Retrying without format restrictions...")
         fallback_opts = get_ydl_options_for_url(real_url)
         fallback_opts['outtmpl'] = outtmpl_pattern
         fallback_opts['overwrites'] = True
@@ -204,7 +209,8 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
                 'preferredquality': '192',
             }]
         else:
-            fallback_opts['format'] = 'best'
+            # ፍጹም ሁለገብ የሆነ fallback
+            fallback_opts.pop('format', None)
 
         try:
             await asyncio.to_thread(_download, fallback_opts)
