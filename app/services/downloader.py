@@ -1,7 +1,7 @@
 import os
-import base64
 import asyncio
 import urllib.request
+import traceback
 from typing import Dict, Any, Optional
 import yt_dlp
 
@@ -28,8 +28,8 @@ def resolve_url(url: str) -> str:
 def get_base_ydl_options() -> dict:
     """Base yt-dlp options configured to bypass YouTube datacenter bot detection."""
     options = {
-        'quiet': True,
-        'no_warnings': True,
+        'quiet': False,
+        'no_warnings': False,
         'noplaylist': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
@@ -37,23 +37,20 @@ def get_base_ydl_options() -> dict:
         'js_runtimes': {'node': {}},
         'extractor_args': {
             'youtube': {
-                'player_client': ['android_vr', 'tv_downgraded', 'mweb'],
-                'player_skip': ['webpage', 'configs'],
+                # አንድሮይድ እና smart tv ክላይንት ቦት ቼክን ያልፋሉ
+                'player_client': ['android_vr', 'tv_downgraded', 'mweb']
             }
         },
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
-        },
-        'impersonate': 'chrome'
+        }
     }
 
-    # ንጹህ Netscape format cookie ከ Heroku Config Var ለማንበብ
     cookie_content = os.getenv('YOUTUBE_COOKIES_TXT')
     if cookie_content:
         cookie_path = '/tmp/youtube_cookies.txt'
         try:
-            # የ Netscape ራስጌ መኖሩን ማረጋገጥ
             if not cookie_content.startswith('# Netscape'):
                 cookie_content = '# Netscape HTTP Cookie File\n' + cookie_content
                 
@@ -79,7 +76,8 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
     try:
         return await asyncio.to_thread(_extract)
     except Exception as e:
-        print(f"Error extracting metadata from {url}: {e}")
+        print(f"Error extracting metadata from {url}: {repr(e)}")
+        traceback.print_exc()
         return None
 
 
