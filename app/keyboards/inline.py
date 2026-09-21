@@ -46,7 +46,7 @@ def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
 
 
 def get_download_options_keyboard(video_id: str, is_premium: bool = False) -> InlineKeyboardMarkup:
-    """Builds media quality choices for download (1080p, 720p, 480p, 360p, MP3 Audio, Thumbnail)."""
+    """Builds media quality choices for download (1080p, 720p, 480p, 360p, 240p, 144p, MP3 Audio, Thumbnail)."""
     buttons = [
         [
             InlineKeyboardButton(
@@ -64,8 +64,18 @@ def get_download_options_keyboard(video_id: str, is_premium: bool = False) -> In
                 callback_data=f"dl:480:{video_id}"
             ),
             InlineKeyboardButton(
-                text="📹 360p SD (Low MB)", 
+                text="📹 360p SD", 
                 callback_data=f"dl:360:{video_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📹 240p (Low MB)", 
+                callback_data=f"dl:240:{video_id}"
+            ),
+            InlineKeyboardButton(
+                text="📹 144p (Lowest MB)", 
+                callback_data=f"dl:144:{video_id}"
             )
         ],
         [

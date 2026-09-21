@@ -1,14 +1,14 @@
 import os
 import asyncio
-from typing import Optional
+import json
 
-
-async def get_video_duration(input_path: str) -> Optional[float]:
-    """Retrieves video duration in seconds using ffprobe."""
+async def get_video_duration(input_path: str) -> float:
+    """Extracts exact video duration in seconds using ffprobe."""
     cmd = [
-        'ffprobe', '-v', 'error',
-        '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1',
+        "ffprobe",
+        "-v", "quiet",
+        "-print_format", "json",
+        "-show_format",
         input_path
     ]
     try:
@@ -18,65 +18,76 @@ async def get_video_duration(input_path: str) -> Optional[float]:
             stderr=asyncio.subprocess.PIPE
         )
         stdout, _ = await proc.communicate()
-        val = stdout.decode().strip()
-        return float(val) if val else None
+        data = json.loads(stdout.decode('utf-8'))
+        return float(data.get('format', {}).get('duration', 0.0))
     except Exception as e:
-        print(f"Error reading video duration: {e}")
-        return None
+        print(f"Error extracting duration via ffprobe: {e}")
+        return 0.0
 
 
-async def compress_video_to_size(
-    input_path: str, 
-    target_size_mb: float = 44.0
-) -> Optional[str]:
+async def compress_video_to_size(input_path: str, target_size_mb: float = 40.0) -> str:
     """
-    Compresses video strictly under target_size_mb (default 44MB safe margin for Telegram 50MB limit).
+    Compresses video strictly under target_size_mb (default 40MB)
+    to safely pass Telegram's 50MB limit regardless of video length.
     """
     if not os.path.exists(input_path):
-        return None
+        return input_path
+
+    current_size_mb = os.path.getsize(input_path) / (1024 * 1024)
+    if current_size_mb <= target_size_mb:
+        return input_path
 
     duration = await get_video_duration(input_path)
-    if not duration or duration <= 0:
-        return None
+    if duration <= 0:
+        duration = 600.0  # Fallback duration (10 mins)
 
-    # Target Bits: 44MB with safe margin for container overhead
-    target_total_bits = target_size_mb * 1024 * 1024 * 8
-    total_bitrate = target_total_bits / duration
+    # Calculate strict target bitrate (leaving 10% safety margin)
+    # Target size in bits: target_size_mb * 8 * 1024 * 1024
+    total_target_bits = (target_size_mb * 0.90) * 8 * 1024 * 1024
+    total_bitrate = int(total_target_bits / duration)
 
-    # 96k audio bitrate saves bandwidth for video
-    audio_bitrate = 96000
-    video_bitrate = int(total_bitrate - audio_bitrate)
+    audio_bitrate = 64 * 1024  # 64 kbps audio is lightweight & clear
+    video_bitrate = max(100 * 1024, total_bitrate - audio_bitrate)
 
-    if video_bitrate <= 80000:
-        video_bitrate = 80000
+    video_kbps = int(video_bitrate / 1024)
+    audio_kbps = int(audio_bitrate / 1024)
 
-    output_path = os.path.splitext(input_path)[0] + "_comp.mp4"
+    base, _ = os.path.splitext(input_path)
+    output_path = f"{base}_compressed.mp4"
 
-    ffmpeg_cmd = [
-        'ffmpeg', '-y',
-        '-i', input_path,
-        '-c:v', 'libx264',
-        '-b:v', f'{video_bitrate}',
-        '-maxrate', f'{int(video_bitrate * 1.1)}',
-        '-bufsize', f'{int(video_bitrate * 1.5)}',
-        '-preset', 'veryfast',
-        '-vf', 'scale=-2:min(720\\,ih)',  # 1080p ከሆነ ወደ 720p ዝቅ በማድረግ ፋይሉ እንዳያብጥ ያደርጋል
-        '-c:a', 'aac',
-        '-b:a', '96k',
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-c:v", "libx264",
+        "-b:v", f"{video_kbps}k",
+        "-maxrate", f"{int(video_kbps * 1.15)}k",
+        "-bufsize", f"{int(video_kbps * 1.5)}k",
+        "-preset", "veryfast",
+        "-pix_fmt", "yuv420p",
+        "-vf", "scale='min(640,iw)':-2",
+        "-c:a", "aac",
+        "-b:a", f"{audio_kbps}k",
+        "-ac", "2",
+        "-ar", "44100",
+        "-movflags", "+faststart",
         output_path
     ]
 
     try:
-        proc = await asyncio.create_subprocess_exec(*ffmpeg_cmd)
-        await proc.wait()
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        _, stderr = await proc.communicate()
 
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            final_size = os.path.getsize(output_path) / (1024 * 1024)
-            print(f"Compressed file created successfully: {final_size:.2f} MB")
+            final_mb = os.path.getsize(output_path) / (1024 * 1024)
+            print(f"Compressed strictly to: {final_mb:.2f} MB")
             return output_path
+        else:
+            print(f"FFmpeg compression stderr: {stderr.decode('utf-8', errors='ignore')}")
+            return input_path
     except Exception as e:
-        print(f"Error compressing video with FFmpeg: {e}")
-
-    return None
-
-compress_video = compress_video_to_size
+        print(f"Compression error: {e}")
+        return input_path
