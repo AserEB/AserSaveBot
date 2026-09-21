@@ -2,6 +2,7 @@ import os
 import glob
 import asyncio
 import urllib.request
+import traceback
 from typing import Dict, Any, Optional, List
 import yt_dlp
 
@@ -34,7 +35,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations bypassing Heroku/Datacenter IP restrictions."""
+    """Provides optimized yt-dlp configurations using clean cookies."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -43,16 +44,16 @@ def get_ydl_options_for_url(url: str) -> dict:
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # ዩቲዩብ በ Heroku IP እንዳይዘጋ 'tv' እና 'mweb' ክላይንቶችን ቅድሚያ መስጠት
+        # android_vr and tvhtml5 have no bot check challenge
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['tv', 'mweb', 'ios', 'android']
+                'player_client': ['android_vr', 'tvhtml5', 'android']
             }
         }
 
@@ -84,10 +85,11 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata safely using process=False to avoid format requirement crashes."""
+    """Extracts metadata safely with process=False to bypass format selection."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
+    ydl_opts['check_formats'] = False
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -101,7 +103,7 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
 
             return {
                 "id": info.get("id"),
-                "title": info.get("title", "Media Video"),
+                "title": info.get("title", "YouTube Video"),
                 "duration": info.get("duration", 0),
                 "thumbnail": thumb,
                 "platform": "youtube"
@@ -114,8 +116,48 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    """Performs quick YouTube keyword search returning top metadata entries."""
+    search_spec = f"ytsearch{max_results}:{query}"
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': True,
+        'skip_download': True,
+    }
+
+    def _search():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search_spec, download=False)
+            return info.get('entries', []) if info else []
+
+    try:
+        entries = await asyncio.to_thread(_search)
+        results = []
+        for entry in entries:
+            if not entry:
+                continue
+            video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
+            thumb = entry.get('thumbnail')
+            if not thumb and entry.get('thumbnails'):
+                thumb = entry.get('thumbnails')[-1].get('url')
+            results.append({
+                "id": entry.get("id"),
+                "title": entry.get("title", "YouTube Video"),
+                "url": video_url,
+                "duration": entry.get("duration", 0),
+                "thumbnails": entry.get("thumbnails", []),
+                "thumbnail": thumb,
+                "channel": entry.get("uploader", "YouTube Creator")
+            })
+        return results
+    except Exception as e:
+        print(f"YouTube search error for query '{query}': {e}")
+        return []
+
+
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media file with flexible stream selection and fallbacks."""
+    """Downloads media file matching inline keyboard options (1080, 720, 480, 360, 240, 144, mp3)."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -127,15 +169,24 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     is_audio = "mp3" in format_spec.lower() or "mp3" in custom_filename.lower()
 
     if is_audio:
-        ydl_opts['format'] = 'ba/ba*/bestaudio/b/best'
+        ydl_opts['format'] = 'ba/b'
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }]
     else:
-        # Separate format ከተከለከለ single-file (b/best) ቅድሚያ እንዲያወርድ ማድረግ
-        ydl_opts['format'] = f"{format_spec}/b/best/bv*+ba" if format_spec else "b/best/bv*+ba"
+        target_h = "360"
+        for h in ["1080", "720", "480", "360", "240", "144"]:
+            if h in format_spec:
+                target_h = h
+                break
+
+        ydl_opts['format'] = (
+            f"bestvideo[height<={target_h}]+bestaudio/best[height<={target_h}]/"
+            f"bv*[height<={target_h}]+ba/b[height<={target_h}]/best"
+        )
+        ydl_opts['format_sort'] = [f"res:{target_h}", "ext:mp4:m4a"]
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -144,20 +195,20 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     try:
         await asyncio.to_thread(_download, ydl_opts)
     except Exception as e:
-        print(f"Primary download failed: {e}. Retrying with universal fallback...")
+        print(f"Primary download failed: {e}. Retrying with fallback...")
         fallback_opts = get_ydl_options_for_url(real_url)
         fallback_opts['outtmpl'] = outtmpl_pattern
         fallback_opts['overwrites'] = True
 
         if is_audio:
-            fallback_opts['format'] = 'ba/bestaudio/b/best'
+            fallback_opts['format'] = 'bestaudio/best'
             fallback_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }]
         else:
-            fallback_opts['format'] = 'b/best/bv*+ba'
+            fallback_opts['format'] = 'best'
 
         try:
             await asyncio.to_thread(_download, fallback_opts)
