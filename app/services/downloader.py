@@ -16,6 +16,7 @@ def resolve_url(url: str) -> str:
     """Follows redirects for short links (pin.it, vt.tiktok.com) and cleans tracking params."""
     target_url = url.strip()
     
+    # 1. Handle Pinterest short links
     if "pin.it" in target_url:
         try:
             req = urllib.request.Request(
@@ -32,6 +33,7 @@ def resolve_url(url: str) -> str:
         except Exception as e:
             print(f"Error resolving Pinterest url: {e}")
 
+    # 2. Clean tracking query parameters for TikTok to prevent status code 0 error
     if "tiktok.com" in target_url:
         target_url = target_url.split("?")[0]
 
@@ -39,10 +41,10 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations per platform."""
+    """Provides optimized yt-dlp configurations per platform (Restored to exact working config)."""
     options = {
-        'quiet': True,
-        'no_warnings': True,
+        'quiet': False,
+        'no_warnings': False,
         'noplaylist': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
@@ -50,35 +52,38 @@ def get_ydl_options_for_url(url: str) -> dict:
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         }
     }
 
+    # YouTube Specific Options - መጀመሪያ ሲሰራ የነበረው ትክክለኛው ሴቲንግ
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # android_vr and tvhtml5 have no bot check challenges on datacenter IPs
+        options['js_runtimes'] = {'node': {}}
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['android_vr', 'tvhtml5', 'android']
+                'player_client': ['android_vr', 'tv_downgraded', 'mweb']
             }
         }
-
-        local_cookie_path = os.path.join(BASE_DIR, "cookies.txt")
+        options['http_headers']['User-Agent'] = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36'
+        
+        # Check cookies
+        local_cookie = os.path.join(BASE_DIR, "cookies.txt")
         env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
-
-        if env_cookie:
+        
+        if os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 0:
+            options['cookiefile'] = local_cookie
+        elif env_cookie:
             cookie_path = '/tmp/youtube_cookies.txt'
             try:
-                content = env_cookie.strip()
-                if not content.startswith('# Netscape'):
-                    content = '# Netscape HTTP Cookie File\n' + content
+                if not env_cookie.startswith('# Netscape'):
+                    env_cookie = '# Netscape HTTP Cookie File\n' + env_cookie
                 with open(cookie_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
+                    f.write(env_cookie)
                 options['cookiefile'] = cookie_path
             except Exception as e:
-                print(f"Error writing cookies from env: {e}")
-        elif os.path.exists(local_cookie_path) and os.path.getsize(local_cookie_path) > 0:
-            options['cookiefile'] = local_cookie_path
+                print(f"Error writing cookies: {e}")
 
+    # TikTok Specific Options
     elif "tiktok.com" in url:
         options['extractor_args'] = {
             'tiktok': {
@@ -90,34 +95,20 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata without triggering format or bot verification failures."""
+    """Extracts metadata without downloading (Restored to exact working method)."""
     real_url = resolve_url(url)
-    
-    # 1. Primary extraction with flat format
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
-    ydl_opts['extract_flat'] = True
 
-    def _extract(opts):
-        with yt_dlp.YoutubeDL(opts) as ydl:
+    def _extract():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             return ydl.extract_info(real_url, download=False)
 
     try:
-        data = await asyncio.to_thread(_extract, ydl_opts)
-        if data:
-            return data
+        return await asyncio.to_thread(_extract)
     except Exception as e:
-        print(f"Flat info extraction failed: {e}. Retrying full extract...")
-
-    # 2. Fallback full extract without check_formats
-    fallback_opts = get_ydl_options_for_url(real_url)
-    fallback_opts['skip_download'] = True
-    fallback_opts['check_formats'] = False
-
-    try:
-        return await asyncio.to_thread(_extract, fallback_opts)
-    except Exception as fe:
-        print(f"Fallback extraction failed: {fe}")
+        print(f"Error extracting metadata from {url}: {repr(e)}")
+        traceback.print_exc()
         return None
 
 
@@ -163,7 +154,7 @@ async def download_media_file(
     format_spec: str, 
     custom_filename: str
 ) -> Optional[str]:
-    """Downloads media file using yt-dlp with strict resolution caps and dedicated audio pipeline."""
+    """Downloads media file using yt-dlp with automatic format fallbacks."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -194,7 +185,7 @@ async def download_media_file(
     elif "144" in format_spec:
         ydl_opts['format'] = 'bestvideo[height<=144]+bestaudio/best[height<=144]/best'
     else:
-        ydl_opts['format'] = 'best'
+        ydl_opts['format'] = 'bestvideo+bestaudio/best'
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -203,44 +194,26 @@ async def download_media_file(
     try:
         await asyncio.to_thread(_download, ydl_opts)
     except Exception as e:
-        print(f"Primary download failed: {e}. Retrying with universal fallback...")
+        print(f"Primary format failed: {e}. Retrying with universal fallback...")
         fallback_opts = get_ydl_options_for_url(real_url)
         fallback_opts['outtmpl'] = outtmpl_pattern
         fallback_opts['overwrites'] = True
+        fallback_opts['format'] = 'best'
         
-        if is_audio:
-            fallback_opts['format'] = 'bestaudio/best'
-            fallback_opts['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }]
-        elif "144" in format_spec:
-            fallback_opts['format'] = 'best[height<=144]/best'
-        elif "240" in format_spec:
-            fallback_opts['format'] = 'best[height<=240]/best'
-        elif "360" in format_spec:
-            fallback_opts['format'] = 'best[height<=360]/best'
-        elif "480" in format_spec:
-            fallback_opts['format'] = 'best[height<=480]/best'
-        elif "720" in format_spec:
-            fallback_opts['format'] = 'best[height<=720]/best'
-        else:
-            fallback_opts['format'] = 'best'
-
         try:
             await asyncio.to_thread(_download, fallback_opts)
         except Exception as fe:
-            print(f"Fallback download completely failed: {fe}")
+            print(f"Fallback failed: {fe}")
             return None
 
+    # የተፈጠረውን ፋይል ፈልጎ ማግኘት
     if is_audio:
         expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
         if os.path.exists(expected_mp3):
             return expected_mp3
 
-    matching_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{base_name}.*"))
-    for f in matching_files:
+    matching = glob.glob(os.path.join(DOWNLOAD_DIR, f"{base_name}.*"))
+    for f in matching:
         if not f.endswith(".part") and not f.endswith(".ytdl"):
             return f
 
