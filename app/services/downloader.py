@@ -12,7 +12,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def resolve_url(url: str) -> str:
-    """Follows redirects for short links (pin.it, vt.tiktok.com) and cleans tracking params."""
+    """Follows redirects for short links and cleans tracking params."""
     target_url = url.strip()
 
     if "pin.it" in target_url:
@@ -35,7 +35,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations using clean cookies."""
+    """Provides optimized yt-dlp configurations using cookies."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -50,7 +50,6 @@ def get_ydl_options_for_url(url: str) -> dict:
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # mweb, android, and web clients combined ensure format visibility
         options['extractor_args'] = {
             'youtube': {
                 'player_client': ['mweb', 'android', 'web']
@@ -85,7 +84,7 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata safely with process=False to bypass format selection."""
+    """Extracts metadata safely with process=False."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
@@ -157,7 +156,7 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media file safely using format_sort without strict format filtering."""
+    """Downloads media file using universal 'best' format to completely avoid availability errors."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -176,15 +175,8 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
             'preferredquality': '192',
         }]
     else:
-        target_h = "360"
-        for h in ["1080", "720", "480", "360", "240", "144"]:
-            if h in format_spec:
-                target_h = h
-                break
-
-        # ፍጹም ሁለገብ ምርጫ፦ የተፈለገውን ከፍታ በቅደም ተከተል ያስቀምጣል፤ ከጠፋ ወደሚገኘው ይሸጋገራል
-        ydl_opts['format'] = f"bv*[height<={target_h}]+ba/b[height<={target_h}]/bv*+ba/b/best"
-        ydl_opts['format_sort'] = [f"res:{target_h}", "ext:mp4:m4a"]
+        # ዩቲዩብ የትኛውንም ፎርማት እንዳይከለክል በነፃነት የሚገኘውን ምርጥ ቪዲዮ እንዲወስድ እናደርገዋለን
+        ydl_opts['format'] = 'best/bestvideo+bestaudio'
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -193,26 +185,8 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     try:
         await asyncio.to_thread(_download, ydl_opts)
     except Exception as e:
-        print(f"Primary format download failed: {e}. Retrying with universal fallback...")
-        fallback_opts = get_ydl_options_for_url(real_url)
-        fallback_opts['outtmpl'] = outtmpl_pattern
-        fallback_opts['overwrites'] = True
-
-        if is_audio:
-            fallback_opts['format'] = 'bestaudio/best'
-            fallback_opts['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }]
-        else:
-            fallback_opts['format'] = 'best'
-
-        try:
-            await asyncio.to_thread(_download, fallback_opts)
-        except Exception as fe:
-            print(f"Fallback download completely failed: {fe}")
-            return None
+        print(f"Download failed: {e}")
+        return None
 
     if is_audio:
         expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
