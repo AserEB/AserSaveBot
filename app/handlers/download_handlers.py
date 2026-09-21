@@ -28,7 +28,26 @@ async def handle_url_message(message: Message):
         )
         return
 
-    # Check 24-hour Limit Permission
+    # Check User & Premium Status
+    user = crud.get_or_create_user(message.from_user.id, message.from_user.full_name or "User")
+    is_premium = user.get("is_premium") or message.from_user.id in getattr(config, "ADMIN_IDS", [])
+
+    # Restrict Facebook & Pinterest to Premium users only
+    if platform.lower() in ["facebook", "pinterest"] and not is_premium:
+        premium_kb = inline.InlineKeyboardMarkup(inline_keyboard=[
+            [inline.InlineKeyboardButton(text="⭐️ Get Premium", callback_data="btn_get_premium")],
+            [inline.InlineKeyboardButton(text="🔙 Home", callback_data="nav_home")]
+        ])
+        await message.answer(
+            f"🔒 <b>{platform.capitalize()} Downloads are Premium Only!</b>\n\n"
+            f"Due to high server resource usage, {platform.capitalize()} downloads are reserved for Premium subscribers.\n\n"
+            f"⭐️ Upgrade now to unlock unlimited access!",
+            reply_markup=premium_kb,
+            parse_mode="HTML"
+        )
+        return
+
+    # Check 24-hour Limit Permission for general downloads
     allowed, status = crud.can_user_download(message.from_user.id)
     if not allowed:
         await message.answer(
@@ -57,9 +76,6 @@ async def handle_url_message(message: Message):
         "thumbnail": info.get("thumbnail"),
         "platform": platform.lower()
     }
-
-    user = crud.get_or_create_user(message.from_user.id, message.from_user.full_name or "User")
-    is_premium = user.get("is_premium") or message.from_user.id in getattr(config, "ADMIN_IDS", [])
 
     info_text = (
         f"🎬 <b>Title:</b> {info.get('title', 'N/A')}\n"

@@ -30,6 +30,105 @@ async def command_start_handler(message: Message, state: FSMContext):
     )
 
 
+# ---------------- COMMANDS SECTION ----------------
+
+@user_router.message(Command("youtube"))
+async def cmd_youtube(message: Message):
+    await message.answer(
+        "🎬 <b>YouTube Downloader</b>\n\n"
+        "Paste any YouTube video or Shorts link directly into this chat to download it in HD video or MP3 audio!",
+        parse_mode="HTML"
+    )
+
+
+@user_router.message(Command("tiktok"))
+async def cmd_tiktok(message: Message):
+    await message.answer(
+        "🎵 <b>TikTok Downloader</b>\n\n"
+        "Send any TikTok video or sound link directly to download it without watermark!",
+        parse_mode="HTML"
+    )
+
+
+@user_router.message(Command("instagram"))
+async def cmd_instagram(message: Message):
+    await message.answer(
+        "📸 <b>Instagram Downloader</b>\n\n"
+        "Send any Instagram Reel, Video, or Post URL directly to download high-resolution media!",
+        parse_mode="HTML"
+    )
+
+
+@user_router.message(Command("facebook"))
+async def cmd_facebook(message: Message):
+    user = crud.get_or_create_user(message.from_user.id, message.from_user.full_name or "User")
+    is_premium = user.get("is_premium") or message.from_user.id in config.ADMIN_IDS
+    status_note = "✅ <i>Your Premium account is ready.</i>" if is_premium else "⚠️ <b>Note:</b> <i>Facebook download is a Premium feature.</i>"
+    
+    await message.answer(
+        f"📘 <b>Facebook Downloader (Premium)</b>\n\n"
+        f"Paste any Facebook Reel or Video link directly here.\n\n{status_note}",
+        parse_mode="HTML"
+    )
+
+
+@user_router.message(Command("pinterest"))
+async def cmd_pinterest(message: Message):
+    user = crud.get_or_create_user(message.from_user.id, message.from_user.full_name or "User")
+    is_premium = user.get("is_premium") or message.from_user.id in config.ADMIN_IDS
+    status_note = "✅ <i>Your Premium account is ready.</i>" if is_premium else "⚠️ <b>Note:</b> <i>Pinterest download is a Premium feature.</i>"
+    
+    await message.answer(
+        f"📌 <b>Pinterest Downloader (Premium)</b>\n\n"
+        f"Paste any Pinterest video or Pin link directly here.\n\n{status_note}",
+        parse_mode="HTML"
+    )
+
+
+@user_router.message(Command("compress"))
+async def cmd_compress(message: Message):
+    await message.answer(
+        "⚡️ <b>Video Compression Service</b>\n\n"
+        "Videos larger than 50MB downloaded by Premium users are automatically optimized using FFmpeg to comply with Telegram's file limit seamlessly!",
+        parse_mode="HTML"
+    )
+
+
+@user_router.message(Command("status"))
+async def cmd_status(message: Message):
+    """Command alternative to check user status."""
+    user = crud.get_or_create_user(
+        telegram_id=message.from_user.id,
+        full_name=message.from_user.full_name or "User",
+        username=message.from_user.username
+    )
+
+    is_premium = user.get("is_premium", False)
+    role = "Administrator 👑" if user.get("role") == "admin" else ("Premium User ⭐️" if is_premium else "Free Member 👤")
+
+    status_text = f"<b>👤 Account Profile</b>\n\n"
+    status_text += f"• <b>Full Name:</b> {user.get('full_name')}\n"
+    status_text += f"• <b>Account Status:</b> {role}\n"
+
+    if is_premium and user.get("premium_expiry"):
+        days_left = formatting.calculate_days_remaining(user.get("premium_expiry"))
+        status_text += f"• <b>Premium Validity:</b> {days_left} Days Remaining ⏳\n"
+    elif user.get("role") != "admin":
+        downloads_today = user.get("daily_yt_downloads", 0)
+        remaining_downloads = max(0, constants.FREE_DAILY_DOWNLOAD_LIMIT - downloads_today)
+        status_text += f"• <b>Free Downloads Remaining Today:</b> {remaining_downloads} / {constants.FREE_DAILY_DOWNLOAD_LIMIT}\n"
+
+    status_text += f"• <b>Total Lifetime Downloads:</b> {user.get('total_downloads', 0)}\n"
+
+    await message.answer(
+        text=status_text,
+        reply_markup=inline.get_navigation_keyboard(back_to="home"),
+        parse_mode="HTML"
+    )
+
+
+# ---------------- CALLBACK QUERIES ----------------
+
 @user_router.callback_query(F.data == "nav_home")
 async def nav_home_handler(callback: CallbackQuery, state: FSMContext):
     """Returns user to the main menu keyboard."""
@@ -64,8 +163,8 @@ async def my_status_handler(callback: CallbackQuery):
     )
 
     is_premium = user.get("is_premium", False)
-    role = "Administrator 👑" if user.get("role") == "admin" else ("Premium User ⭐" if is_premium else "Free Member 👤")
-    
+    role = "Administrator 👑" if user.get("role") == "admin" else ("Premium User ⭐️" if is_premium else "Free Member 👤")
+
     status_text = f"<b>👤 Account Profile</b>\n\n"
     status_text += f"• <b>Full Name:</b> {user.get('full_name')}\n"
     status_text += f"• <b>Account Status:</b> {role}\n"

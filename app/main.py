@@ -3,7 +3,7 @@ import logging
 import sys
 import urllib.parse
 from aiogram import Bot, Dispatcher
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 
 from app.config import config
 from app.handlers import main_router
@@ -11,6 +11,26 @@ from app.database import crud
 
 # Setup Application Logging
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+
+
+async def set_bot_commands(bot: Bot):
+    """Registers command shortcuts in Telegram's Menu button for all users."""
+    commands = [
+        BotCommand(command="start", description="Start or restart the bot"),
+        BotCommand(command="status", description="Check account & limit status"),
+        BotCommand(command="youtube", description="Download YouTube & Shorts"),
+        BotCommand(command="tiktok", description="Download TikTok (No Watermark)"),
+        BotCommand(command="instagram", description="Download Instagram Reels"),
+        BotCommand(command="facebook", description="Download Facebook Videos (Premium)"),
+        BotCommand(command="pinterest", description="Download Pinterest Pins (Premium)"),
+        BotCommand(command="compress", description="Video compression information"),
+        BotCommand(command="admin", description="Admin Control Panel"),
+    ]
+    try:
+        await bot.set_my_commands(commands)
+        logging.info("Bot commands successfully registered in Telegram Menu.")
+    except Exception as e:
+        logging.warning(f"Failed to set bot commands: {e}")
 
 
 async def premium_expiry_checker_task(bot: Bot):
@@ -67,6 +87,9 @@ async def main():
 
     # Register All Application Routers
     dp.include_router(main_router)
+
+    # Register Command Menu in Telegram
+    await set_bot_commands(bot)
 
     # Launch Background Premium Expiry Task
     asyncio.create_task(premium_expiry_checker_task(bot))
