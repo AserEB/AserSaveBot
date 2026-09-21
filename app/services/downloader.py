@@ -16,7 +16,6 @@ def resolve_url(url: str) -> str:
     """Follows redirects for short links (pin.it, vt.tiktok.com) and cleans tracking params."""
     target_url = url.strip()
     
-    # 1. Handle Pinterest short links
     if "pin.it" in target_url:
         try:
             req = urllib.request.Request(
@@ -33,7 +32,6 @@ def resolve_url(url: str) -> str:
         except Exception as e:
             print(f"Error resolving Pinterest url: {e}")
 
-    # 2. Clean tracking query parameters for TikTok to prevent status code 0 error
     if "tiktok.com" in target_url:
         target_url = target_url.split("?")[0]
 
@@ -41,7 +39,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations per platform."""
+    """Provides optimized yt-dlp configurations using Heroku Config Var cookies."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -50,27 +48,22 @@ def get_ydl_options_for_url(url: str) -> dict:
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # mweb እና ios በዳታሴንተር አይፒ ላይ የቦት ፈተና የመጠየቅ እድላቸው እጅግ አነስተኛ ነው
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb', 'ios'],
-                'player_skip': ['webpage', 'configs']
+                'player_client': ['mweb', 'android']
             }
         }
-        
-        local_cookie = os.path.join(BASE_DIR, "cookies.txt")
+
+        # 1. First priority: Read cookie directly from Heroku Config Var
         env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
-        
-        if os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 0:
-            options['cookiefile'] = local_cookie
-        elif env_cookie:
+        if env_cookie and len(env_cookie.strip()) > 20:
             cookie_path = '/tmp/youtube_cookies.txt'
             try:
                 content = env_cookie.strip()
@@ -80,7 +73,12 @@ def get_ydl_options_for_url(url: str) -> dict:
                     f.write(content)
                 options['cookiefile'] = cookie_path
             except Exception as e:
-                print(f"Error writing cookies: {e}")
+                print(f"Error writing cookies from env: {e}")
+        else:
+            # 2. Second priority: Local file
+            local_cookie = os.path.join(BASE_DIR, "cookies.txt")
+            if os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 0:
+                options['cookiefile'] = local_cookie
 
     elif "tiktok.com" in url:
         options['extractor_args'] = {
@@ -93,7 +91,7 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata without downloading (Restored to exact working method)."""
+    """Extracts metadata without format restrictions."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
@@ -204,7 +202,6 @@ async def download_media_file(
             print(f"Fallback failed: {fe}")
             return None
 
-    # የተፈጠረውን ፋይል ፈልጎ ማግኘት
     if is_audio:
         expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
         if os.path.exists(expected_mp3):
