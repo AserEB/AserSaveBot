@@ -48,37 +48,38 @@ def get_ydl_options_for_url(url: str) -> dict:
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # 1. IOS & Android clients are immune to datacenter bot check
+        # Android client has the highest success rate on datacenter IPs
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['ios', 'android', 'mweb'],
-                'player_skip': ['webpage', 'configs']
+                'player_client': ['android'],
+                'player_skip': ['configs']
             }
         }
 
-        # 2. Check for cookies file directly in repo or /tmp
+        # Check for cookies file
         local_cookie_path = os.path.join(BASE_DIR, "cookies.txt")
         env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
 
-        if os.path.exists(local_cookie_path) and os.path.getsize(local_cookie_path) > 0:
-            options['cookiefile'] = local_cookie_path
-        elif env_cookie:
+        if env_cookie:
             cookie_path = '/tmp/youtube_cookies.txt'
             try:
-                if not env_cookie.startswith('# Netscape'):
-                    env_cookie = '# Netscape HTTP Cookie File\n' + env_cookie
+                content = env_cookie.strip()
+                if not content.startswith('# Netscape'):
+                    content = '# Netscape HTTP Cookie File\n' + content
                 with open(cookie_path, 'w', encoding='utf-8') as f:
-                    f.write(env_cookie)
+                    f.write(content)
                 options['cookiefile'] = cookie_path
             except Exception as e:
-                print(f"Error writing cookies: {e}")
+                print(f"Error writing cookies from env: {e}")
+        elif os.path.exists(local_cookie_path) and os.path.getsize(local_cookie_path) > 0:
+            options['cookiefile'] = local_cookie_path
 
     elif "tiktok.com" in url:
         options['extractor_args'] = {
