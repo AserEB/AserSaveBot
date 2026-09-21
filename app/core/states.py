@@ -10,5 +10,6 @@ class SearchStates(StatesGroup):
     waiting_for_yt_query = State()
 
 class AdminStates(StatesGroup):
-    waiting_for_broadcast = State()
     waiting_for_reject_reason = State()
+    waiting_for_broadcast_content = State()
+    waiting_for_broadcast_confirm = State()
