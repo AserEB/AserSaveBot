@@ -39,7 +39,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations with reliable player clients."""
+    """Provides optimized yt-dlp configurations with comprehensive player clients."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -48,17 +48,17 @@ def get_ydl_options_for_url(url: str) -> dict:
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # mweb and android always provide full format lists without crashing
+        # ios, mweb, and android combined unlock all streams (1080p down to 144p + direct MP3)
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb', 'android']
+                'player_client': ['ios', 'mweb', 'android']
             }
         }
 
@@ -91,22 +91,16 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """
-    Extracts metadata without triggering 'Requested format is not available'.
-    Uses process=False to bypass format selection completely!
-    """
+    """Extracts metadata safely without format restrictions."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # process=False stops yt-dlp from checking if video formats match
             info = ydl.extract_info(real_url, download=False, process=False)
             if not info:
                 return None
-            
-            # Extract essential data safely
             return {
                 "id": info.get("id"),
                 "title": info.get("title", "Video"),
@@ -118,15 +112,15 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
     try:
         return await asyncio.to_thread(_extract)
     except Exception as e:
-        print(f"Direct info extract failed: {e}. Trying standard extract...")
+        print(f"Direct info extract failed: {e}. Trying standard fallback...")
         try:
-            standard_opts = get_ydl_options_for_url(real_url)
-            standard_opts['skip_download'] = True
-            standard_opts['format'] = 'best'
-            with yt_dlp.YoutubeDL(standard_opts) as ydl:
+            fallback_opts = get_ydl_options_for_url(real_url)
+            fallback_opts['skip_download'] = True
+            fallback_opts['extract_flat'] = True
+            with yt_dlp.YoutubeDL(fallback_opts) as ydl:
                 return await asyncio.to_thread(ydl.extract_info, real_url, download=False)
         except Exception as fe:
-            print(f"Standard fallback also failed: {fe}")
+            print(f"Fallback extraction failed: {fe}")
             return None
 
 
@@ -172,7 +166,7 @@ async def download_media_file(
     format_spec: str, 
     custom_filename: str
 ) -> Optional[str]:
-    """Downloads media file using yt-dlp with flexible universal fallbacks."""
+    """Downloads media file with flexible format selectors that gracefully match any stream."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -191,19 +185,19 @@ async def download_media_file(
             'preferredquality': '192',
         }]
     elif "1080" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
+        ydl_opts['format'] = 'bv*[height<=1080]+ba/b[height<=1080]/best'
     elif "720" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+        ydl_opts['format'] = 'bv*[height<=720]+ba/b[height<=720]/best'
     elif "480" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
+        ydl_opts['format'] = 'bv*[height<=480]+ba/b[height<=480]/best'
     elif "360" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
+        ydl_opts['format'] = 'bv*[height<=360]+ba/b[height<=360]/best'
     elif "240" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=240]+bestaudio/best[height<=240]/best'
+        ydl_opts['format'] = 'bv*[height<=240]+ba/b[height<=240]/best'
     elif "144" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=144]+bestaudio/best[height<=144]/best'
+        ydl_opts['format'] = 'bv*[height<=144]+ba/b[height<=144]/best'
     else:
-        ydl_opts['format'] = 'best'
+        ydl_opts['format'] = 'b/best'
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -225,12 +219,12 @@ async def download_media_file(
                 'preferredquality': '192',
             }]
         else:
-            fallback_opts['format'] = 'best'
+            fallback_opts['format'] = 'b/best'
         
         try:
             await asyncio.to_thread(_download, fallback_opts)
         except Exception as fe:
-            print(f"Fallback failed: {fe}")
+            print(f"Fallback download completely failed: {fe}")
             return None
 
     if is_audio:
