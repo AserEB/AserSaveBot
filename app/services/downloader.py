@@ -1,4 +1,5 @@
 import os
+import glob
 import asyncio
 import urllib.request
 import traceback
@@ -15,7 +16,6 @@ def resolve_url(url: str) -> str:
     """Follows redirects for short links (pin.it, vt.tiktok.com) and cleans tracking params."""
     target_url = url.strip()
     
-    # 1. Handle Pinterest short links
     if "pin.it" in target_url:
         try:
             req = urllib.request.Request(
@@ -32,7 +32,6 @@ def resolve_url(url: str) -> str:
         except Exception as e:
             print(f"Error resolving Pinterest url: {e}")
 
-    # 2. Clean tracking query parameters for TikTok to prevent status code 0 error
     if "tiktok.com" in target_url:
         target_url = target_url.split("?")[0]
 
@@ -49,29 +48,34 @@ def get_ydl_options_for_url(url: str) -> dict:
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        options['js_runtimes'] = {'node': {}}
+        # 1. IOS & Android clients are immune to datacenter bot check
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['android_vr', 'tv_downgraded', 'mweb']
+                'player_client': ['ios', 'android', 'mweb'],
+                'player_skip': ['webpage', 'configs']
             }
         }
-        options['http_headers']['User-Agent'] = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36'
-        
-        cookie_content = os.getenv('YOUTUBE_COOKIES_TXT')
-        if cookie_content:
+
+        # 2. Check for cookies file directly in repo or /tmp
+        local_cookie_path = os.path.join(BASE_DIR, "cookies.txt")
+        env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
+
+        if os.path.exists(local_cookie_path) and os.path.getsize(local_cookie_path) > 0:
+            options['cookiefile'] = local_cookie_path
+        elif env_cookie:
             cookie_path = '/tmp/youtube_cookies.txt'
             try:
-                if not cookie_content.startswith('# Netscape'):
-                    cookie_content = '# Netscape HTTP Cookie File\n' + cookie_content
+                if not env_cookie.startswith('# Netscape'):
+                    env_cookie = '# Netscape HTTP Cookie File\n' + env_cookie
                 with open(cookie_path, 'w', encoding='utf-8') as f:
-                    f.write(cookie_content)
+                    f.write(env_cookie)
                 options['cookiefile'] = cookie_path
             except Exception as e:
                 print(f"Error writing cookies: {e}")
@@ -146,15 +150,19 @@ async def download_media_file(
     format_spec: str, 
     custom_filename: str
 ) -> Optional[str]:
-    """Downloads media file using yt-dlp with automatic format fallbacks."""
+    """Downloads media file using yt-dlp with strict resolution caps and dedicated audio pipeline."""
     real_url = resolve_url(url)
-    output_path = os.path.join(DOWNLOAD_DIR, custom_filename)
+    base_name = os.path.splitext(custom_filename)[0]
+    outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
+    
     ydl_opts = get_ydl_options_for_url(real_url)
-    ydl_opts['outtmpl'] = output_path
+    ydl_opts['outtmpl'] = outtmpl_pattern
     ydl_opts['overwrites'] = True
 
-    if "mp3" in format_spec.lower() or "mp3" in custom_filename.lower():
-        ydl_opts['format'] = 'bestaudio/best'
+    is_audio = "mp3" in format_spec.lower() or "mp3" in custom_filename.lower()
+
+    if is_audio:
+        ydl_opts['format'] = 'ba/b'
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -163,40 +171,66 @@ async def download_media_file(
     elif "1080" in format_spec:
         ydl_opts['format'] = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
     elif "720" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+        ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]'
     elif "480" in format_spec:
-        ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
+        ydl_opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]'
+    elif "360" in format_spec:
+        ydl_opts['format'] = 'bestvideo[height<=360]+bestaudio/best[height<=360]'
+    elif "240" in format_spec:
+        ydl_opts['format'] = 'bestvideo[height<=240]+bestaudio/best[height<=240]'
+    elif "144" in format_spec:
+        ydl_opts['format'] = 'bestvideo[height<=144]+bestaudio/best[height<=144]'
     else:
-        ydl_opts['format'] = 'bestvideo+bestaudio/best'
+        ydl_opts['format'] = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([real_url])
-        return output_path
 
     try:
-        path = await asyncio.to_thread(_download, ydl_opts)
-        if os.path.exists(path):
-            return path
+        await asyncio.to_thread(_download, ydl_opts)
     except Exception as e:
-        print(f"Primary format failed: {e}. Retrying with universal fallback...")
+        print(f"Primary download failed: {e}. Retrying with strict single stream fallback...")
         fallback_opts = get_ydl_options_for_url(real_url)
-        fallback_opts['outtmpl'] = output_path
+        fallback_opts['outtmpl'] = outtmpl_pattern
         fallback_opts['overwrites'] = True
-        fallback_opts['format'] = 'best'
         
+        if is_audio:
+            fallback_opts['format'] = 'bestaudio/best'
+            fallback_opts['postprocessors'] = [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }]
+        elif "144" in format_spec:
+            fallback_opts['format'] = 'best[height<=144]'
+        elif "240" in format_spec:
+            fallback_opts['format'] = 'best[height<=240]'
+        elif "360" in format_spec:
+            fallback_opts['format'] = 'best[height<=360]'
+        elif "480" in format_spec:
+            fallback_opts['format'] = 'best[height<=480]'
+        elif "720" in format_spec:
+            fallback_opts['format'] = 'best[height<=720]'
+        else:
+            fallback_opts['format'] = 'best'
+
         try:
-            path = await asyncio.to_thread(_download, fallback_opts)
-            if os.path.exists(path):
-                return path
+            await asyncio.to_thread(_download, fallback_opts)
         except Exception as fe:
-            print(f"Fallback failed: {fe}")
+            print(f"Fallback download completely failed: {fe}")
             return None
 
-    base_path = os.path.splitext(output_path)[0]
-    if os.path.exists(f"{base_path}.mp3"):
-        return f"{base_path}.mp3"
-        
+    if is_audio:
+        expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
+        if os.path.exists(expected_mp3):
+            return expected_mp3
+
+    matching_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{base_name}.*"))
+    for f in matching_files:
+        if not f.endswith(".part") and not f.endswith(".ytdl"):
+            return f
+
     return None
 
 
