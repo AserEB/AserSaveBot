@@ -18,7 +18,8 @@ async def get_video_duration(input_path: str) -> Optional[float]:
             stderr=asyncio.subprocess.PIPE
         )
         stdout, _ = await proc.communicate()
-        return float(stdout.decode().strip())
+        val = stdout.decode().strip()
+        return float(val) if val else None
     except Exception as e:
         print(f"Error reading video duration: {e}")
         return None
@@ -26,48 +27,42 @@ async def get_video_duration(input_path: str) -> Optional[float]:
 
 async def compress_video_to_size(
     input_path: str, 
-    target_size_mb: float = 48.0
+    target_size_mb: float = 44.0
 ) -> Optional[str]:
     """
-    Compresses a video file using FFmpeg to ensure its size stays below target_size_mb.
-    Calculates target video bitrate automatically based on duration.
+    Compresses video strictly under target_size_mb (default 44MB safe margin for Telegram 50MB limit).
     """
     if not os.path.exists(input_path):
         return None
-
-    file_size_mb = os.path.getsize(input_path) / (1024 * 1024)
-    
-    # If already smaller than target, return original path
-    if file_size_mb <= target_size_mb:
-        return input_path
 
     duration = await get_video_duration(input_path)
     if not duration or duration <= 0:
         return None
 
-    # Target Bits = Target MB * 1024 * 1024 * 8
-    target_bits = target_size_mb * 1024 * 1024 * 8
-    total_bitrate = target_bits / duration
-    
-    # Reserve 128k for audio stream
-    audio_bitrate = 128000
+    # Target Bits: 44MB with safe margin for container overhead
+    target_total_bits = target_size_mb * 1024 * 1024 * 8
+    total_bitrate = target_total_bits / duration
+
+    # 96k audio bitrate saves bandwidth for video
+    audio_bitrate = 96000
     video_bitrate = int(total_bitrate - audio_bitrate)
 
-    if video_bitrate <= 100000:
-        video_bitrate = 100000  # Minimum safe bitrate threshold
+    if video_bitrate <= 80000:
+        video_bitrate = 80000
 
-    output_path = os.path.splitext(input_path)[0] + "_compressed.mp4"
+    output_path = os.path.splitext(input_path)[0] + "_comp.mp4"
 
     ffmpeg_cmd = [
         'ffmpeg', '-y',
         '-i', input_path,
         '-c:v', 'libx264',
         '-b:v', f'{video_bitrate}',
-        '-maxrate', f'{int(video_bitrate * 1.2)}',
-        '-bufsize', f'{int(video_bitrate * 2)}',
-        '-preset', 'faster',
+        '-maxrate', f'{int(video_bitrate * 1.1)}',
+        '-bufsize', f'{int(video_bitrate * 1.5)}',
+        '-preset', 'veryfast',
+        '-vf', 'scale=-2:min(720\\,ih)',  # 1080p ከሆነ ወደ 720p ዝቅ በማድረግ ፋይሉ እንዳያብጥ ያደርጋል
         '-c:a', 'aac',
-        '-b:a', '128k',
+        '-b:a', '96k',
         output_path
     ]
 
@@ -76,11 +71,12 @@ async def compress_video_to_size(
         await proc.wait()
 
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            final_size = os.path.getsize(output_path) / (1024 * 1024)
+            print(f"Compressed file created successfully: {final_size:.2f} MB")
             return output_path
     except Exception as e:
         print(f"Error compressing video with FFmpeg: {e}")
 
     return None
 
-# ማንኛውም ፋይል compress_video ብሎ ቢጠራው እንዳይበላሽ alias ተሰጥቶታል
 compress_video = compress_video_to_size
