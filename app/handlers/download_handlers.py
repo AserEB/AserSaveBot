@@ -134,17 +134,18 @@ async def process_media_download(callback: CallbackQuery):
 
     await callback.message.edit_text("⏳ <i>Downloading media file to server... 📊 [████░░░░░░] 40%</i>", parse_mode="HTML")
 
-    # የተስተካከለ እና ፎርማት እንዳይጠፋ የሚያረጋግጥ Format Map
+    # የተስተካከለ እና ፎርማት እንዳይጠፋ የሚያረጋግጥ የተረጋጋ Format Map
     format_map = {
-        "1080": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bv*[height<=1080]+ba/b/best",
-        "720": "bestvideo[height<=720]+bestaudio/best[height<=720]/bv*[height<=720]+ba/b/best",
-        "480": "bestvideo[height<=480]+bestaudio/best[height<=480]/bv*[height<=480]+ba/b/best",
-        "360": "bestvideo[height<=360]+bestaudio/best[height<=360]/bv*[height<=360]+ba/b/best",
-        "240": "bestvideo[height<=240]+bestaudio/best[height<=240]/bv*[height<=240]+ba/b/best",
-        "144": "bestvideo[height<=144]+bestaudio/best[height<=144]/bv*[height<=144]+ba/b/best",
-        "mp3": "ba/b"
+        "1080": "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b/best",
+        "720": "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b/best",
+        "480": "bv*[height<=480]+ba/b[height<=480]/bv*+ba/b/best",
+        "360": "bv*[height<=360]+ba/b[height<=360]/bv*+ba/b/best",
+        "240": "bv*[height<=240]+ba/b[height<=240]/bv*+ba/b/best",
+        "144": "bv*[height<=144]+ba/b[height<=144]/bv*+ba/b/best",
+        "mp3": "ba/ba*/bestaudio/best"
     }
-    format_spec = format_map.get(quality, "bestvideo[height<=360]+bestaudio/best[height<=360]/best")
+    
+    format_spec = format_map.get(quality, "bv*[height<=360]+ba/b/best")
     ext = "mp3" if quality == "mp3" else "mp4"
     filename = f"{session_id}_{quality}.{ext}"
 
@@ -157,7 +158,7 @@ async def process_media_download(callback: CallbackQuery):
 
     file_size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
 
-    # 48MB በላይ ከሆነ ለቴሌግራም ቦት ማስጠንቀቂያ መስጠት
+    # የቴሌግራም የ 50MB ፋይል ገደብ መፈተሻ
     if file_size_mb > 48.0 and quality != "mp3":
         if not is_premium:
             downloader.cleanup_file(downloaded_path)

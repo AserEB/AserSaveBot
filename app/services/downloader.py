@@ -52,7 +52,8 @@ def get_ydl_options_for_url(url: str) -> dict:
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['android_vr', 'ios', 'mweb', 'android']
+                # android_vr ተወግዶ የተረጋጉት ios, mweb, web እና android ገብተዋል
+                'player_client': ['ios', 'mweb', 'web', 'android']
             }
         }
 
@@ -84,11 +85,10 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata safely with process=False to completely bypass format checks."""
+    """Extracts metadata safely using process=False to avoid format requirement crashes."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
-    ydl_opts['check_formats'] = False
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -102,7 +102,7 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
 
             return {
                 "id": info.get("id"),
-                "title": info.get("title", "YouTube Video"),
+                "title": info.get("title", "Media Video"),
                 "duration": info.get("duration", 0),
                 "thumbnail": thumb,
                 "platform": "youtube"
@@ -156,7 +156,7 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media file with flexible stream selection (bv*+ba) and audio fallbacks."""
+    """Downloads media file with flexible stream selection and fallbacks."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -175,19 +175,8 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
             'preferredquality': '192',
         }]
     else:
-        target_h = "360"
-        for h in ["1080", "720", "480", "360", "240", "144"]:
-            if h in format_spec:
-                target_h = h
-                break
-
-        # የተስተካከለ፦ ቪዲዮ እና ድምፅን ከየትኛውም ፎርማት አዋህዶ እንዲያወርድ ተደርጓል
-        ydl_opts['format'] = (
-            f"bv*[height<={target_h}]+ba/"
-            f"b[height<={target_h}]/"
-            f"bestvideo[height<={target_h}]+bestaudio/"
-            f"bv*+ba/b/best"
-        )
+        # format_spec ን በቀጥታ ከመጠቀም ይልቅ ተለዋዋጭ አሰራር
+        ydl_opts['format'] = format_spec if format_spec else 'bv*+ba/b/best'
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -209,7 +198,6 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
                 'preferredquality': '192',
             }]
         else:
-            # Fallback ላይም ቢሆን 'best' ብቻ ሳይሆን 'bv*+ba' እንዲፈልግ ተደርጓል
             fallback_opts['format'] = 'bv*+ba/b/best'
 
         try:
