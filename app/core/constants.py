@@ -20,9 +20,10 @@ FREE_DAILY_DOWNLOAD_LIMIT = 1
 # System UI Messages (Professional English)
 WELCOME_MESSAGE = (
     "<b>Welcome to Aser SaveBot!</b> 🚀\n\n"
-    "Your ultimate high-speed media downloader and video compression assistant. "
-    "Download videos and audio seamlessly from YouTube, TikTok, Instagram, Facebook, and Pinterest.\n\n"
-    "👇 <b>Choose an option from the menu below or simply send any media link directly!</b>"
+    "🔗 <b>Send me a link:</b>\n"
+    "Paste any media link from <b>YouTube, TikTok, Instagram, Facebook, or Pinterest</b>, and I will extract it in high quality within seconds!\n\n"
+    "🔎 <b>Looking for a video on YouTube?</b>\n"
+    "Tap the <b>🔎 Search YouTube Videos</b> button below to search and download directly 👇"
 )
 
 ABOUT_US_TEXT = (
