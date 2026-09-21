@@ -48,18 +48,17 @@ def get_ydl_options_for_url(url: str) -> dict:
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # Android client has the highest success rate on datacenter IPs
+        # Multiple client fallback prevents bot detection and format blocks
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['android'],
-                'player_skip': ['configs']
+                'player_client': ['android', 'mweb', 'ios']
             }
         }
 
@@ -92,10 +91,12 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata without downloading."""
+    """Extracts metadata without downloading or format restrictions."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
+    ydl_opts['format'] = None  # Removes format filter during info extraction
+    ydl_opts['extract_flat'] = False
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
