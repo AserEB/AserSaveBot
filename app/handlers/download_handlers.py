@@ -94,13 +94,19 @@ async def handle_url_message(message: Message):
 @download_router.callback_query(F.data.startswith("dl:"))
 async def process_media_download(callback: CallbackQuery):
     """Handles selected resolution download, applies file compression if needed, and delivers file."""
+    # 1. ወዲያውኑ callback መመለስ (timeout እንዳይፈጠር)
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     parts = callback.data.split(":")
     quality = parts[1]
     session_id = parts[2]
 
     session = DOWNLOAD_SESSIONS.get(session_id)
     if not session:
-        await callback.answer("⚠️ Session expired. Please paste the media link again.", show_alert=True)
+        await callback.message.answer("⚠️ Session expired. Please paste the media link again.")
         return
 
     user = crud.get_or_create_user(callback.from_user.id, callback.from_user.full_name or "User")
@@ -108,7 +114,7 @@ async def process_media_download(callback: CallbackQuery):
 
     # Enforce premium for 1080p or Thumbnails
     if quality in ["1080", "thumb"] and not is_premium:
-        await callback.answer("🔒 1080p FHD and Thumbnail downloads are exclusive to Premium users!", show_alert=True)
+        await callback.message.answer("🔒 1080p FHD and Thumbnail downloads are exclusive to Premium users!")
         return
 
     # Handle Thumbnail Request
@@ -124,7 +130,7 @@ async def process_media_download(callback: CallbackQuery):
             crud.record_successful_download(callback.from_user.id, action_type=session.get("platform", "media"))
             DOWNLOAD_SESSIONS.pop(session_id, None)
         else:
-            await callback.answer("❌ Thumbnail not available for this media.", show_alert=True)
+            await callback.message.answer("❌ Thumbnail not available for this media.")
         return
 
     await callback.message.edit_text("⏳ <i>Downloading media file to server... 📊 [████░░░░░░] 40%</i>", parse_mode="HTML")
@@ -148,8 +154,8 @@ async def process_media_download(callback: CallbackQuery):
 
     file_size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
 
-    # File Size Handling (>48MB Telegram limit protection)
-    if file_size_mb > 48.0 and quality != "mp3":
+    # 46MB በላይ ከሆነ ለቴሌግራም አስጊ ስለሆነ ኮምፕረስ ማድረግ
+    if file_size_mb > 46.0 and quality != "mp3":
         if not is_premium:
             downloader.cleanup_file(downloaded_path)
             await callback.message.edit_text(
@@ -159,8 +165,8 @@ async def process_media_download(callback: CallbackQuery):
             DOWNLOAD_SESSIONS.pop(session_id, None)
             return
 
-        await callback.message.edit_text("⚡️ <i>File size exceeds 50MB. Compressing video using FFmpeg... 📊</i>", parse_mode="HTML")
-        compressed_path = await compressor.compress_video_to_size(downloaded_path, target_size_mb=48.0)
+        await callback.message.edit_text("⚡️ <i>File size exceeds safe Telegram limit. Compressing with FFmpeg... 📊</i>", parse_mode="HTML")
+        compressed_path = await compressor.compress_video_to_size(downloaded_path, target_size_mb=43.0)
         downloader.cleanup_file(downloaded_path)
         downloaded_path = compressed_path
 
@@ -196,7 +202,7 @@ async def process_media_download(callback: CallbackQuery):
 
 @download_router.message(F.video | (F.document & F.document.mime_type.startswith("video/")))
 async def handle_user_video_upload(message: Message):
-    """Allows Premium users to send their own video files to be compressed to fit under 50MB."""
+    """Handles direct video compression requests under Telegram Bot API's 20MB download limit."""
     user = crud.get_or_create_user(message.from_user.id, message.from_user.full_name or "User")
     is_premium = user.get("is_premium") or message.from_user.id in getattr(config, "ADMIN_IDS", [])
 
@@ -207,7 +213,7 @@ async def handle_user_video_upload(message: Message):
         ])
         await message.answer(
             "🔒 <b>Direct Video Compression is a Premium Feature!</b>\n\n"
-            "Send your large video files and the bot will compress them using high-efficiency FFmpeg to reduce file size without losing quality.\n\n"
+            "Send your video files and the bot will compress them using high-efficiency FFmpeg to reduce file size.\n\n"
             "⭐️ Upgrade to Premium to use this feature!",
             reply_markup=premium_kb,
             parse_mode="HTML"
@@ -215,27 +221,39 @@ async def handle_user_video_upload(message: Message):
         return
 
     video_obj = message.video or message.document
-    original_size_mb = video_obj.file_size / (1024 * 1024)
+    file_size = getattr(video_obj, "file_size", 0) or 0
+    original_size_mb = file_size / (1024 * 1024)
+
+    # Telegram Bot API የ 20MB ገደብ አለው
+    if original_size_mb > 20.0:
+        await message.answer(
+            f"⚠️ <b>File is too large ({original_size_mb:.1f} MB)!</b>\n\n"
+            "Telegram's Bot API only allows bots to directly download incoming files up to <b>20MB</b>.\n\n"
+            "💡 <b>Tip:</b> For videos larger than 20MB, paste the media link (YouTube, TikTok, Facebook, etc.) directly, and the bot will fetch and compress it automatically from the cloud!",
+            parse_mode="HTML"
+        )
+        return
 
     status_msg = await message.answer(
         f"📥 <i>Receiving video ({original_size_mb:.1f} MB)... Downloading to server...</i>",
         parse_mode="HTML"
     )
 
-    file_id = video_obj.file_id
-    file_info = await message.bot.get_file(file_id)
     unique_name = f"upload_{uuid.uuid4().hex[:8]}.mp4"
     local_input_path = os.path.join(downloader.DOWNLOAD_DIR, unique_name)
 
     try:
+        file_info = await message.bot.get_file(video_obj.file_id)
         await message.bot.download_file(file_info.file_path, destination=local_input_path)
         
-        await status_msg.edit_text("⚡️ <i>Compressing video with FFmpeg... This may take a moment 📊</i>", parse_mode="HTML")
+        await status_msg.edit_text("⚡️ <i>Compressing video with FFmpeg... 📊</i>", parse_mode="HTML")
         
-        compressed_path = await compressor.compress_video_to_size(local_input_path, target_size_mb=45.0)
+        # ከ 20MB በታች ያለውን ፋይል መጠኑን ይበልጥ በማሳነስ (ለምሳሌ ወደ 8MB) ማዘጋጀት
+        target_mb = max(2.0, original_size_mb * 0.5)
+        compressed_path = await compressor.compress_video_to_size(local_input_path, target_size_mb=target_mb)
         
         if not compressed_path or not os.path.exists(compressed_path):
-            await status_msg.edit_text("❌ Video compression failed. The video format might not be supported.")
+            await status_msg.edit_text("❌ Video compression failed. The format might not be supported.")
             return
 
         new_size_mb = os.path.getsize(compressed_path) / (1024 * 1024)
