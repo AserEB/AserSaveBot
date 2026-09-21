@@ -30,6 +30,9 @@ def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="ℹ️ About Us", callback_data="btn_about"),
             InlineKeyboardButton(text="💬 Contact Support", url=support_url)
+        ],
+        [
+            InlineKeyboardButton(text="ℹ️ Bot Version (v1.0)", callback_data="btn_version")
         ]
     ]
 

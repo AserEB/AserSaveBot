@@ -1,5 +1,5 @@
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 def format_bytes(size_in_bytes: int) -> str:
     """Converts raw byte sizes to human-readable MB / GB string."""
@@ -39,3 +39,27 @@ def calculate_days_remaining(expiry_iso_string: str) -> int:
     expiry_dt = datetime.fromisoformat(expiry_iso_string.replace("Z", "+00:00"))
     delta = expiry_dt - now
     return max(0, delta.days)
+
+
+def calculate_next_download_countdown(last_download_iso: str) -> str:
+    """
+    Calculates remaining hours and minutes until the 24-hour free download limit resets.
+    """
+    if not last_download_iso:
+        return "Available Now ✅"
+
+    try:
+        now = datetime.now(timezone.utc)
+        last_dt = datetime.fromisoformat(last_download_iso.replace("Z", "+00:00"))
+        reset_time = last_dt + timedelta(hours=24)
+        remaining = reset_time - now
+
+        if remaining.total_seconds() <= 0:
+            return "Available Now ✅"
+
+        total_seconds = int(remaining.total_seconds())
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        return f"{hours}h {minutes}m ⏳"
+    except Exception:
+        return "Within 24 Hours ⏳"
