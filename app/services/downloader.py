@@ -39,7 +39,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations using Heroku Config Var cookies."""
+    """Provides optimized yt-dlp configurations with reliable player clients."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -48,21 +48,24 @@ def get_ydl_options_for_url(url: str) -> dict:
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
+        # mweb and android always provide full format lists without crashing
         options['extractor_args'] = {
             'youtube': {
                 'player_client': ['mweb', 'android']
             }
         }
 
-        # 1. First priority: Read cookie directly from Heroku Config Var
+        # Check for cookies file
+        local_cookie = os.path.join(BASE_DIR, "cookies.txt")
         env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
+
         if env_cookie and len(env_cookie.strip()) > 20:
             cookie_path = '/tmp/youtube_cookies.txt'
             try:
@@ -74,11 +77,8 @@ def get_ydl_options_for_url(url: str) -> dict:
                 options['cookiefile'] = cookie_path
             except Exception as e:
                 print(f"Error writing cookies from env: {e}")
-        else:
-            # 2. Second priority: Local file
-            local_cookie = os.path.join(BASE_DIR, "cookies.txt")
-            if os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 0:
-                options['cookiefile'] = local_cookie
+        elif os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 0:
+            options['cookiefile'] = local_cookie
 
     elif "tiktok.com" in url:
         options['extractor_args'] = {
@@ -91,23 +91,43 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata purely without enforcing format requirements."""
+    """
+    Extracts metadata without triggering 'Requested format is not available'.
+    Uses process=False to bypass format selection completely!
+    """
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
-    ydl_opts['extract_flat'] = True       # ፎርማት ሳይፈልግ metadata ብቻ እንዲያወጣ ያደርገዋል
-    ydl_opts['check_formats'] = False      # Format unavailable errorን ያስቀራል
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            return ydl.extract_info(real_url, download=False)
+            # process=False stops yt-dlp from checking if video formats match
+            info = ydl.extract_info(real_url, download=False, process=False)
+            if not info:
+                return None
+            
+            # Extract essential data safely
+            return {
+                "id": info.get("id"),
+                "title": info.get("title", "Video"),
+                "duration": info.get("duration", 0),
+                "thumbnail": info.get("thumbnail") or (info.get("thumbnails")[-1]["url"] if info.get("thumbnails") else None),
+                "channel": info.get("uploader", "Creator")
+            }
 
     try:
         return await asyncio.to_thread(_extract)
     except Exception as e:
-        print(f"Error extracting metadata from {url}: {repr(e)}")
-        traceback.print_exc()
-        return None
+        print(f"Direct info extract failed: {e}. Trying standard extract...")
+        try:
+            standard_opts = get_ydl_options_for_url(real_url)
+            standard_opts['skip_download'] = True
+            standard_opts['format'] = 'best'
+            with yt_dlp.YoutubeDL(standard_opts) as ydl:
+                return await asyncio.to_thread(ydl.extract_info, real_url, download=False)
+        except Exception as fe:
+            print(f"Standard fallback also failed: {fe}")
+            return None
 
 
 async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -152,7 +172,7 @@ async def download_media_file(
     format_spec: str, 
     custom_filename: str
 ) -> Optional[str]:
-    """Downloads media file using yt-dlp with automatic format fallbacks."""
+    """Downloads media file using yt-dlp with flexible universal fallbacks."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl_pattern = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
@@ -183,7 +203,7 @@ async def download_media_file(
     elif "144" in format_spec:
         ydl_opts['format'] = 'bestvideo[height<=144]+bestaudio/best[height<=144]/best'
     else:
-        ydl_opts['format'] = 'bestvideo+bestaudio/best'
+        ydl_opts['format'] = 'best'
 
     def _download(opts):
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -196,7 +216,16 @@ async def download_media_file(
         fallback_opts = get_ydl_options_for_url(real_url)
         fallback_opts['outtmpl'] = outtmpl_pattern
         fallback_opts['overwrites'] = True
-        fallback_opts['format'] = 'best'
+        
+        if is_audio:
+            fallback_opts['format'] = 'bestaudio/best'
+            fallback_opts['postprocessors'] = [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }]
+        else:
+            fallback_opts['format'] = 'best'
         
         try:
             await asyncio.to_thread(_download, fallback_opts)
