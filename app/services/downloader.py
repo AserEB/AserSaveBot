@@ -35,7 +35,7 @@ def resolve_url(url: str) -> str:
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations using clean cookies."""
+    """Provides optimized yt-dlp configurations using clean cookies and client spoofing."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -43,8 +43,9 @@ def get_ydl_options_for_url(url: str) -> dict:
         'geo_bypass': True,
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
+        'impersonate': 'chrome',  # curl_cffi በመጠቀም ጥያቄውን የብራውዘር ያስመስላል
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
@@ -52,7 +53,8 @@ def get_ydl_options_for_url(url: str) -> dict:
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['default', 'web']  # ተስተካክሏል: ፎርማቶች እንዳይታገዱ ያደርጋል
+                # 'ios' እና 'android' የዩቲዩብ ማገጃዎችን ለማለፍ ይረዳሉ
+                'player_client': ['ios', 'android', 'mweb']
             }
         }
 
