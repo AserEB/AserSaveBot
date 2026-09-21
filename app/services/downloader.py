@@ -18,6 +18,7 @@ def get_base_ydl_options() -> dict:
         'nocheckcertificate': True,
         'source_address': '0.0.0.0',
         'js_runtimes': {'node': {}},
+        'cookiefile': 'cookies.txt',
     }
 
 
