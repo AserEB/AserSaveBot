@@ -12,30 +12,6 @@ DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
-def get_cookie_file_path() -> Optional[str]:
-    """Reads Heroku Config Var or Local cookies.txt and creates a temporary cookie file."""
-    env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
-    local_cookie = os.path.join(BASE_DIR, "cookies.txt")
-
-    if env_cookie and len(env_cookie.strip()) > 30:
-        cookie_path = '/tmp/youtube_cookies.txt'
-        try:
-            content = env_cookie.strip()
-            content = content.replace('\\n', '\n')
-            if not content.startswith('# Netscape'):
-                content = '# Netscape HTTP Cookie File\n' + content
-            with open(cookie_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            return cookie_path
-        except Exception as e:
-            print(f"Error writing env cookie: {e}")
-
-    if os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
-        return local_cookie
-
-    return None
-
-
 def resolve_url(url: str) -> str:
     """Follows redirects for short links (pin.it, fb.watch, vt.tiktok.com) and cleans tracking params."""
     target_url = url.strip()
@@ -101,7 +77,6 @@ def get_ydl_options_for_url(url: str) -> dict:
         'noplaylist': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
-        'format': 'b/best',  # ተለዋዋጭ ፎርማት እንዲጠቀም ያደርጋል
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
@@ -111,14 +86,26 @@ def get_ydl_options_for_url(url: str) -> dict:
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb', 'ios', 'android', 'web'],
-                'formats': ['missing_pot']
+                'player_client': ['ios', 'android', 'mweb']
             }
         }
 
-        cookie_path = get_cookie_file_path()
-        if cookie_path:
-            options['cookiefile'] = cookie_path
+        env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
+        local_cookie = os.path.join(BASE_DIR, "cookies.txt")
+
+        if env_cookie and len(env_cookie.strip()) > 30:
+            cookie_path = '/tmp/youtube_cookies.txt'
+            try:
+                content = env_cookie.strip()
+                if not content.startswith('# Netscape'):
+                    content = '# Netscape HTTP Cookie File\n' + content
+                with open(cookie_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                options['cookiefile'] = cookie_path
+            except Exception as e:
+                print(f"Error writing env cookie: {e}")
+        elif os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
+            options['cookiefile'] = local_cookie
 
     elif "tiktok.com" in url:
         options['extractor_args'] = {
@@ -236,19 +223,36 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     ]
 
     if any(domain in real_url for domain in ["youtube.com", "youtu.be"]):
-        cmd.extend(["--extractor-args", "youtube:player_client=mweb,ios,android,web;formats=missing_pot"])
+        cmd.extend(["--extractor-args", "youtube:player_client=ios,android,mweb"])
     elif "tiktok.com" in real_url:
         cmd.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
 
-    cookie_file_to_use = get_cookie_file_path()
+    env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
+    local_cookie = os.path.join(BASE_DIR, "cookies.txt")
+    cookie_file_to_use = None
+
+    if env_cookie and len(env_cookie.strip()) > 30:
+        cookie_path = '/tmp/youtube_cookies.txt'
+        try:
+            content = env_cookie.strip()
+            if not content.startswith('# Netscape'):
+                content = '# Netscape HTTP Cookie File\n' + content
+            with open(cookie_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            cookie_file_to_use = cookie_path
+        except Exception:
+            pass
+    elif os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
+        cookie_file_to_use = local_cookie
+
     if cookie_file_to_use:
         cmd.extend(["--cookies", cookie_file_to_use])
 
     if is_audio:
-        audio_fmt = format_spec if format_spec and "bv" not in format_spec else "ba/ba*/bestaudio/b/best"
+        audio_fmt = format_spec if format_spec and "bv" not in format_spec else "ba/ba*/bestaudio/best"
         cmd.extend(["-f", audio_fmt, "-x", "--audio-format", "mp3", "--audio-quality", "192K"])
     else:
-        video_fmt = format_spec if format_spec else "bv*[height<=360]+ba/b[height<=360]/b/best"
+        video_fmt = format_spec if format_spec else "bv*[height<=360]+ba/b/best"
         cmd.extend(["-f", video_fmt, "--merge-output-format", "mp4"])
 
     cmd.append(real_url)
