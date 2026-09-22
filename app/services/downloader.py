@@ -4,9 +4,9 @@ import re
 import asyncio
 import urllib.request
 import traceback
+import subprocess
 from typing import Dict, Any, Optional, List
 import yt_dlp
-import subprocess
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
@@ -36,7 +36,7 @@ def resolve_url(url: str) -> str:
         if match:
             target_url = match.group(1) + "/"
 
-    if "tiktok.com" in target_url:
+    if "tiktok.com" in target_url or "instagram.com" in target_url:
         target_url = target_url.split("?")[0]
 
     return target_url
@@ -128,29 +128,46 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
     ydl_opts['skip_download'] = True
     ydl_opts['check_formats'] = False
 
+    is_yt = any(domain in real_url for domain in ["youtube.com", "youtu.be"])
+
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(real_url, download=False, process=False)
             if not info:
                 return None
 
+            if 'entries' in info and len(info['entries']) > 0:
+                info = info['entries'][0]
+
             thumb = info.get("thumbnail")
             if not thumb and info.get("thumbnails"):
-                thumb = info.get("thumbnails")[-1].get("url")
+                thumbs = [t.get("url") for t in info.get("thumbnails") if t.get("url")]
+                if thumbs:
+                    thumb = thumbs[-1]
+
+            title = info.get("title") or info.get("description", "Media Content")
+            if len(title) > 60:
+                title = title[:57] + "..."
 
             return {
-                "id": info.get("id"),
-                "title": info.get("title", "YouTube Video"),
+                "id": info.get("id", "media_id"),
+                "title": title,
                 "duration": info.get("duration", 0),
                 "thumbnail": thumb,
-                "platform": "youtube"
+                "platform": "youtube" if is_yt else "media"
             }
 
     try:
         return await asyncio.to_thread(_extract)
     except Exception as e:
         print(f"Extraction error: {repr(e)}")
-        return None
+        return {
+            "id": "media_id",
+            "title": "Media Content",
+            "duration": 0,
+            "thumbnail": None,
+            "platform": "youtube" if is_yt else "media"
+        }
 
 
 async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -242,7 +259,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     if is_audio:
         cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "192K"])
     else:
-        # Improved format selection to support YouTube adaptive streams
+        # Format selection supporting YouTube & Instagram audio/video merge
         cmd.extend(["-f", "bv*+ba/b/best", "--merge-output-format", "mp4"])
 
     cmd.append(real_url)
