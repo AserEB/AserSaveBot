@@ -30,7 +30,7 @@ def resolve_url(url: str) -> str:
         except Exception as e:
             print(f"Error resolving Pinterest url: {e}")
 
-    # Clean Pinterest tracking parameters and extra paths (/sent/?invite_code=...)
+    # Clean Pinterest tracking parameters and extra paths
     if "pinterest.com/pin/" in target_url:
         match = re.search(r'(https?://[^\s]+/pin/\d+)', target_url)
         if match:
@@ -56,7 +56,6 @@ def download_pinterest_image_fallback(url: str, dest_path: str) -> bool:
             
             if match:
                 img_url = match.group(1)
-                # Upgrade image quality to original resolution if possible
                 img_url = re.sub(r'/(236x|474x|736x)/', '/originals/', img_url)
                 
                 img_req = urllib.request.Request(
@@ -90,7 +89,7 @@ def get_ydl_options_for_url(url: str) -> dict:
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb', 'android', 'web']
+                'player_client': ['android', 'web']
             }
         }
 
@@ -140,10 +139,10 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
 
             return {
                 "id": info.get("id"),
-                "title": info.get("title", "YouTube Video"),
+                "title": info.get("title", "Media Video"),
                 "duration": info.get("duration", 0),
                 "thumbnail": thumb,
-                "platform": "youtube"
+                "platform": "youtube" if any(domain in real_url for domain in ["youtube.com", "youtu.be"]) else "media"
             }
 
     try:
@@ -194,14 +193,14 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media file securely using system yt-dlp command-line subprocess to avoid Python API format locks."""
+    """Downloads media file securely using system yt-dlp command-line subprocess."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
     outtmpl = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
 
     is_audio = "mp3" in format_spec.lower() or "mp3" in custom_filename.lower()
 
-    # Build yt-dlp command with valid flags
+    # Build yt-dlp command
     cmd = [
         "yt-dlp",
         "--no-warnings",
@@ -211,9 +210,8 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
         "-o", outtmpl
     ]
 
-    # Add specific extractor options for YouTube and TikTok in CLI command
     if any(domain in real_url for domain in ["youtube.com", "youtu.be"]):
-        cmd.extend(["--extractor-args", "youtube:player_client=mweb,android,web"])
+        cmd.extend(["--extractor-args", "youtube:player_client=android,web"])
     elif "tiktok.com" in real_url:
         cmd.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
 
@@ -242,8 +240,8 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     if is_audio:
         cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "192K"])
     else:
-        # Improved format selection to support YouTube adaptive streams
-        cmd.extend(["-f", "bv*+ba/b/best", "--merge-output-format", "mp4"])
+        # የተመረጠውን format_spec በትክክል እንዲጠቀም ተደርጓል
+        cmd.extend(["-f", format_spec, "--merge-output-format", "mp4"])
 
     cmd.append(real_url)
 
@@ -259,7 +257,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
 
     success = await asyncio.to_thread(_run_sub)
 
-    # Fallback to download Pinterest Photo if yt-dlp fails (e.g. No video formats found)
+    # Fallback for Pinterest Photo if yt-dlp fails
     if not success and "pinterest" in real_url:
         fallback_img_path = os.path.join(DOWNLOAD_DIR, f"{base_name}.jpg")
         img_success = await asyncio.to_thread(download_pinterest_image_fallback, real_url, fallback_img_path)

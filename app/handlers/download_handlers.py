@@ -84,7 +84,6 @@ async def handle_url_message(message: Message):
         f"👇 Select desired resolution or audio format:"
     )
 
-    # platform=platform.lower() እዚህ ጋር ተጨምሯል (ለ YouTube Thumbnail፣ ለሌላው Image ይላል)
     await processing_msg.edit_text(
         text=info_text,
         reply_markup=inline.get_download_options_keyboard(session_id, is_premium=is_premium, platform=platform.lower()),
@@ -124,7 +123,6 @@ async def process_media_download(callback: CallbackQuery):
     if quality == "thumb":
         await callback.message.edit_text(f"⏳ <i>Fetching {btn_label}...</i>", parse_mode="HTML")
         
-        # 1. መጀመሪያ በኮዱ የተያዘው Thumbnail URL ካለ እንሞክራለን
         thumb_url = session.get("thumbnail")
         if thumb_url:
             try:
@@ -140,7 +138,6 @@ async def process_media_download(callback: CallbackQuery):
             except Exception:
                 pass
 
-        # 2. ካልሆነ በ Downloader በኩል ፎቶውን አውርደን እንልካለን
         filename = f"{session_id}_image.jpg"
         downloaded_img = await downloader.download_media_file(session['url'], "thumb", filename)
         if downloaded_img and os.path.exists(downloaded_img):
@@ -162,13 +159,14 @@ async def process_media_download(callback: CallbackQuery):
 
     await callback.message.edit_text("⏳ <i>Downloading media file to server... 📊 [████░░░░░░] 40%</i>", parse_mode="HTML")
 
+    # ለ YouTube አስተማማኝ የሆነ የ Format Spec ማስተካከያ
     format_map = {
-        "1080": "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b/best",
-        "720": "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b/best",
-        "480": "bv*[height<=480]+ba/b[height<=480]/bv*+ba/b/best",
-        "360": "bv*[height<=360]+ba/b[height<=360]/bv*+ba/b/best",
-        "240": "bv*[height<=240]+ba/b[height<=240]/bv*+ba/b/best",
-        "144": "bv*[height<=144]+ba/b[height<=144]/bv*+ba/b/best",
+        "1080": "bv*[height<=1080]+ba/b[height<=1080]/b/best",
+        "720": "bv*[height<=720]+ba/b[height<=720]/b/best",
+        "480": "bv*[height<=480]+ba/b[height<=480]/b/best",
+        "360": "bv*[height<=360]+ba/b[height<=360]/b/best",
+        "240": "bv*[height<=240]+ba/b[height<=240]/b/best",
+        "144": "bv*[height<=144]+ba/b[height<=144]/b/best",
         "mp3": "ba/ba*/bestaudio/best"
     }
     
@@ -178,7 +176,7 @@ async def process_media_download(callback: CallbackQuery):
 
     downloaded_path = await downloader.download_media_file(session['url'], format_spec, filename)
 
-    # 1. ሊንኩ ቪዲዮ ሳይሆን ፎቶ ሆኖ የወረደ ከሆነ
+    # 1. ፒንተረስት ወይም ሊንኩ ፎቶ ሆኖ ከወረደ
     if downloaded_path and downloaded_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
         try:
             input_file = FSInputFile(downloaded_path)
@@ -191,12 +189,18 @@ async def process_media_download(callback: CallbackQuery):
             DOWNLOAD_SESSIONS.pop(session_id, None)
         return
 
-    # 2. ማውረድ ካልተቻለ (ተጠቃሚው የፎቶ ሊንክ ልኮ የቪዲዮ ጥራት ሲመርጥ)
+    # 2. ማውረድ ከተሳነ (የስህተት መልእክቶች ተለያይተዋል)
     if not downloaded_path or not os.path.exists(downloaded_path):
-        error_msg = (
-            f"⚠️ <b>Your link is not a video, it is an image!</b>\n\n"
-            f"Please click the <b>🖼 {btn_label}</b> button to get the photo, or send a valid video link."
-        )
+        if platform_name == "pinterest":
+            error_msg = (
+                f"⚠️ <b>Your link is not a video, it is an image!</b>\n\n"
+                f"Please click the <b>🖼 {btn_label}</b> button to get the photo, or send a valid video link."
+            )
+        else:
+            error_msg = (
+                f"❌ <b>Download Failed!</b>\n\n"
+                f"The requested format was restricted or unavailable. Please try selecting a different quality (e.g. 360p or MP3)."
+            )
         await callback.message.edit_text(error_msg, parse_mode="HTML")
         DOWNLOAD_SESSIONS.pop(session_id, None)
         return
@@ -216,7 +220,7 @@ async def process_media_download(callback: CallbackQuery):
             )
             return
 
-        # Compressing for Premium users
+        # Compression for Premium users
         await callback.message.edit_text("⚡️ <i>File exceeds 50MB. Compressing strictly under 40MB with FFmpeg... 📊</i>", parse_mode="HTML")
         compressed_path = await compressor.compress_video_to_size(downloaded_path, target_size_mb=40.0)
         downloader.cleanup_file(downloaded_path)
