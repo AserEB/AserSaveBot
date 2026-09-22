@@ -189,7 +189,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
         cookie_file_to_use = local_cookie
 
     if cookie_file_to_use:
-        cmd.extend(["--cookiefile", cookie_file_to_use])
+        cmd.extend(["--cookies", cookie_file_to_use])
 
     if is_audio:
         cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "192K"])
