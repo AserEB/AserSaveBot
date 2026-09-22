@@ -16,7 +16,6 @@ def resolve_url(url: str) -> str:
     """Follows redirects for short links (pin.it, fb.watch, vt.tiktok.com) and cleans tracking params."""
     target_url = url.strip()
 
-    # Expand short URLs for Pinterest, Facebook, TikTok
     if any(domain in target_url for domain in ["pin.it", "fb.watch", "vt.tiktok.com", "facebook.com/share"]):
         try:
             req = urllib.request.Request(
@@ -30,13 +29,11 @@ def resolve_url(url: str) -> str:
         except Exception as e:
             print(f"Error resolving URL: {e}")
 
-    # Clean Pinterest tracking parameters
     if "pinterest.com/pin/" in target_url:
         match = re.search(r'(https?://[^\s]+/pin/\d+)', target_url)
         if match:
             target_url = match.group(1) + "/"
 
-    # Clean TikTok and Instagram tracking parameters
     if "tiktok.com" in target_url or "instagram.com" in target_url:
         target_url = target_url.split("?")[0]
 
@@ -216,7 +213,6 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
 
     is_audio = "mp3" in format_spec.lower() or "mp3" in custom_filename.lower()
 
-    # Build yt-dlp command
     cmd = [
         "yt-dlp",
         "--no-warnings",
@@ -231,7 +227,6 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     elif "tiktok.com" in real_url:
         cmd.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
 
-    # Cookie support
     env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
     local_cookie = os.path.join(BASE_DIR, "cookies.txt")
     cookie_file_to_use = None
@@ -253,7 +248,6 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     if cookie_file_to_use:
         cmd.extend(["--cookies", cookie_file_to_use])
 
-    # Audio & Video options configuration
     if is_audio:
         audio_fmt = format_spec if format_spec and "bv" not in format_spec else "ba/ba*/bestaudio/best"
         cmd.extend(["-f", audio_fmt, "-x", "--audio-format", "mp3", "--audio-quality", "192K"])
@@ -271,7 +265,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
         except Exception as ex:
             print(f"Subprocess exception: {ex}")
 
-        # Verify output existence regardless of yt-dlp exit status (warnings often return non-zero)
+        # returncode ሳይሆን የፋይሉን መኖር ብቻ በመፈተሽ ስህተትን ማስቀረት
         if is_audio:
             expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
             if os.path.exists(expected_mp3) and os.path.getsize(expected_mp3) > 1000:
@@ -285,7 +279,6 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
 
     success = await asyncio.to_thread(_run_sub)
 
-    # Fallback for Pinterest images
     if not success and "pinterest" in real_url:
         fallback_img_path = os.path.join(DOWNLOAD_DIR, f"{base_name}.jpg")
         img_success = await asyncio.to_thread(download_pinterest_image_fallback, real_url, fallback_img_path)

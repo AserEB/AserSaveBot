@@ -28,11 +28,9 @@ async def handle_url_message(message: Message):
         )
         return
 
-    # Check User & Premium Status
     user = crud.get_or_create_user(message.from_user.id, message.from_user.full_name or "User")
     is_premium = user.get("is_premium") or message.from_user.id in getattr(config, "ADMIN_IDS", [])
 
-    # Restrict Facebook & Pinterest to Premium users only
     if platform.lower() in ["facebook", "pinterest"] and not is_premium:
         premium_kb = inline.InlineKeyboardMarkup(inline_keyboard=[
             [inline.InlineKeyboardButton(text="⭐️ Get Premium", callback_data="btn_get_premium")],
@@ -47,7 +45,6 @@ async def handle_url_message(message: Message):
         )
         return
 
-    # Check 24-hour Limit Permission for general downloads
     allowed, status = crud.can_user_download(message.from_user.id)
     if not allowed:
         await message.answer(
@@ -62,7 +59,6 @@ async def handle_url_message(message: Message):
 
     processing_msg = await message.answer("🔄 <i>Processing media link... Please wait...</i>", parse_mode="HTML")
 
-    # Extract Video Metadata
     info = await downloader.extract_media_info(url)
     if not info:
         await processing_msg.edit_text("❌ Failed to fetch video information. Please make sure the media link is public.")
@@ -114,12 +110,10 @@ async def process_media_download(callback: CallbackQuery):
     platform_name = session.get("platform", "media")
     btn_label = "Thumbnail" if platform_name in ["youtube", "yt"] else "Image"
 
-    # Enforce premium for 1080p or Thumbnails/Images
     if quality in ["1080", "thumb"] and not is_premium:
         await callback.message.answer(f"🔒 1080p FHD and {btn_label} downloads are exclusive to Premium users!")
         return
 
-    # Handle Thumbnail / Image Request
     if quality == "thumb":
         await callback.message.edit_text(f"⏳ <i>Fetching {btn_label}...</i>", parse_mode="HTML")
         
@@ -159,7 +153,6 @@ async def process_media_download(callback: CallbackQuery):
 
     await callback.message.edit_text("⏳ <i>Downloading media file to server... 📊 [████░░░░░░] 40%</i>", parse_mode="HTML")
 
-    # Format spec map
     format_map = {
         "1080": "bv*[height<=1080]+ba/b[height<=1080]/b/best",
         "720": "bv*[height<=720]+ba/b[height<=720]/b/best",
@@ -176,7 +169,6 @@ async def process_media_download(callback: CallbackQuery):
 
     downloaded_path = await downloader.download_media_file(session['url'], format_spec, filename)
 
-    # 1. Image output handler
     if downloaded_path and downloaded_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
         try:
             input_file = FSInputFile(downloaded_path)
@@ -189,7 +181,6 @@ async def process_media_download(callback: CallbackQuery):
             DOWNLOAD_SESSIONS.pop(session_id, None)
         return
 
-    # 2. Download failed error handling
     if not downloaded_path or not os.path.exists(downloaded_path):
         if platform_name == "pinterest":
             error_msg = (
@@ -207,7 +198,6 @@ async def process_media_download(callback: CallbackQuery):
 
     file_size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
 
-    # Telegram 50MB Limit Check
     if file_size_mb > 48.0 and quality != "mp3":
         if not is_premium:
             downloader.cleanup_file(downloaded_path)
@@ -220,7 +210,6 @@ async def process_media_download(callback: CallbackQuery):
             )
             return
 
-        # Compression for Premium users
         await callback.message.edit_text("⚡️ <i>File exceeds 50MB. Compressing strictly under 40MB with FFmpeg... 📊</i>", parse_mode="HTML")
         compressed_path = await compressor.compress_video_to_size(downloaded_path, target_size_mb=40.0)
         downloader.cleanup_file(downloaded_path)
@@ -267,8 +256,6 @@ async def process_media_download(callback: CallbackQuery):
         downloader.cleanup_file(downloaded_path)
         DOWNLOAD_SESSIONS.pop(session_id, None)
 
-
-# ---------------- USER DIRECT VIDEO COMPRESSION ----------------
 
 @download_router.message(F.video | (F.document & F.document.mime_type.startswith("video/")))
 async def handle_user_video_upload(message: Message):
