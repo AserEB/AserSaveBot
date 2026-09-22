@@ -3,34 +3,18 @@ import glob
 import re
 import asyncio
 import urllib.request
-import json
-import subprocess
+import traceback
 from typing import Dict, Any, Optional, List
 import yt_dlp
+import subprocess
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Currently Active Invidious & Piped Instances
-INVIDIOUS_INSTANCES = [
-    "https://inv.tux.pizza",
-    "https://invidious.nerdvpn.de",
-    "https://vid.puffyan.us",
-    "https://invidious.drgns.space",
-    "https://invidious.projectsegfau.lt"
-]
-
-PIPED_INSTANCES = [
-    "https://pipedapi.adminforge.de",
-    "https://pipedapi.tokhmi.xyz",
-    "https://pipedapi.rinuo.cc",
-    "https://pipedapi.astral.ne.jp"
-]
-
 
 def resolve_url(url: str) -> str:
-    """Follows redirects for short links and cleans tracking parameters."""
+    """Follows redirects for short links (pin.it, vt.tiktok.com) and cleans tracking params."""
     target_url = url.strip()
 
     if "pin.it" in target_url:
@@ -46,6 +30,7 @@ def resolve_url(url: str) -> str:
         except Exception as e:
             print(f"Error resolving Pinterest url: {e}")
 
+    # Clean Pinterest tracking parameters and extra paths (/sent/?invite_code=...)
     if "pinterest.com/pin/" in target_url:
         match = re.search(r'(https?://[^\s]+/pin/\d+)', target_url)
         if match:
@@ -57,181 +42,119 @@ def resolve_url(url: str) -> str:
     return target_url
 
 
-def extract_youtube_id(url: str) -> Optional[str]:
-    """Extracts YouTube 11-character video ID."""
-    match = re.search(r'(?:v=|\/|be\/|shorts\/)([0-9A-Za-z_-]{11})', url)
-    return match.group(1) if match else None
-
-
-def download_youtube_via_api(video_id: str, quality: str, dest_path: str) -> bool:
-    """Attempts YouTube download via active Invidious APIs first, then Piped APIs."""
-    is_audio = quality.lower() == "mp3"
-
-    # Strategy A: Try Invidious Instances
-    for instance in INVIDIOUS_INSTANCES:
-        try:
-            api_url = f"{instance}/api/v1/videos/{video_id}"
-            req = urllib.request.Request(
-                api_url,
-                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-            )
-            with urllib.request.urlopen(req, timeout=8) as response:
-                if response.status != 200:
-                    continue
-                data = json.loads(response.read().decode('utf-8'))
-
-            selected_url = None
-
-            if is_audio:
-                adaptive = data.get("adaptiveFormats", [])
-                audio_formats = [f for f in adaptive if str(f.get("type", "")).startswith("audio/")]
-                if audio_formats:
-                    selected_url = audio_formats[0].get("url")
-            else:
-                format_streams = data.get("formatStreams", [])
-                target_q = quality if quality.isdigit() else "360"
+def download_pinterest_image_fallback(url: str, dest_path: str) -> bool:
+    """Fallback helper to download Pinterest photos when yt-dlp finds no video formats."""
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'}
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            html = response.read().decode('utf-8', errors='ignore')
+            match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html) or \
+                    re.search(r'<meta\s+name="og:image"\s+content="([^"]+)"', html)
+            
+            if match:
+                img_url = match.group(1)
+                # Upgrade image quality to original resolution if possible
+                img_url = re.sub(r'/(236x|474x|736x)/', '/originals/', img_url)
                 
-                # Match requested quality
-                for stream in format_streams:
-                    if target_q in str(stream.get("qualityLabel", "")):
-                        selected_url = stream.get("url")
-                        break
-                
-                if not selected_url and format_streams:
-                    selected_url = format_streams[0].get("url")
-
-            if selected_url:
-                dl_req = urllib.request.Request(
-                    selected_url,
+                img_req = urllib.request.Request(
+                    img_url,
                     headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                 )
-                with urllib.request.urlopen(dl_req, timeout=120) as stream_resp:
+                with urllib.request.urlopen(img_req, timeout=20) as img_resp:
                     with open(dest_path, 'wb') as f:
-                        while chunk := stream_resp.read(1024 * 64):
-                            f.write(chunk)
-
-                if os.path.exists(dest_path) and os.path.getsize(dest_path) > 10000:
-                    print(f"Successfully downloaded via Invidious API ({instance})")
-                    return True
-        except Exception as e:
-            print(f"Invidious instance {instance} failed: {e}")
-            continue
-
-    # Strategy B: Fallback to Active Piped Instances
-    for instance in PIPED_INSTANCES:
-        try:
-            api_url = f"{instance}/streams/{video_id}"
-            req = urllib.request.Request(
-                api_url,
-                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-            )
-            with urllib.request.urlopen(req, timeout=8) as response:
-                if response.status != 200:
-                    continue
-                data = json.loads(response.read().decode('utf-8'))
-
-            selected_url = None
-
-            if is_audio:
-                audio_streams = data.get("audioStreams", [])
-                if audio_streams:
-                    selected_url = audio_streams[0].get("url")
-            else:
-                video_streams = data.get("videoStreams", [])
-                combined = [s for s in video_streams if s.get("videoOnly") is False]
-                if combined:
-                    selected_url = combined[0].get("url")
-                elif video_streams:
-                    selected_url = video_streams[0].get("url")
-
-            if selected_url:
-                dl_req = urllib.request.Request(
-                    selected_url,
-                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-                )
-                with urllib.request.urlopen(dl_req, timeout=120) as stream_resp:
-                    with open(dest_path, 'wb') as f:
-                        while chunk := stream_resp.read(1024 * 64):
-                            f.write(chunk)
-
-                if os.path.exists(dest_path) and os.path.getsize(dest_path) > 10000:
-                    print(f"Successfully downloaded via Piped API ({instance})")
-                    return True
-        except Exception as e:
-            print(f"Piped instance {instance} failed: {e}")
-            continue
-
+                        f.write(img_resp.read())
+                return os.path.exists(dest_path) and os.path.getsize(dest_path) > 1000
+    except Exception as e:
+        print(f"Pinterest image fallback error: {e}")
     return False
 
 
-async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts video metadata using Invidious/Piped API for YouTube or yt-dlp for others."""
-    real_url = resolve_url(url)
-    yt_id = extract_youtube_id(real_url)
-
-    if yt_id:
-        for instance in INVIDIOUS_INSTANCES:
-            try:
-                api_url = f"{instance}/api/v1/videos/{yt_id}"
-                req = urllib.request.Request(
-                    api_url,
-                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-                )
-                with urllib.request.urlopen(req, timeout=6) as response:
-                    if response.status == 200:
-                        data = json.loads(response.read().decode('utf-8'))
-                        return {
-                            "id": yt_id,
-                            "title": data.get("title", "YouTube Video"),
-                            "duration": data.get("lengthSeconds", 0),
-                            "thumbnail": f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg",
-                            "platform": "youtube"
-                        }
-            except Exception:
-                continue
-
-        return {
-            "id": yt_id,
-            "title": "YouTube Video",
-            "duration": 0,
-            "thumbnail": f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg",
-            "platform": "youtube"
-        }
-
-    # Non-YouTube Platforms (TikTok, Facebook, Instagram, Pinterest)
-    ydl_opts = {
+def get_ydl_options_for_url(url: str) -> dict:
+    """Provides optimized yt-dlp configurations using clean cookies."""
+    options = {
         'quiet': True,
         'no_warnings': True,
-        'skip_download': True,
+        'noplaylist': True,
         'geo_bypass': True,
+        'nocheckcertificate': True,
+        'source_address': '0.0.0.0',
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
     }
+
+    if any(domain in url for domain in ["youtube.com", "youtu.be"]):
+        options['extractor_args'] = {
+            'youtube': {
+                'player_client': ['mweb', 'android', 'web']
+            }
+        }
+
+        env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
+        local_cookie = os.path.join(BASE_DIR, "cookies.txt")
+
+        if env_cookie and len(env_cookie.strip()) > 30:
+            cookie_path = '/tmp/youtube_cookies.txt'
+            try:
+                content = env_cookie.strip()
+                if not content.startswith('# Netscape'):
+                    content = '# Netscape HTTP Cookie File\n' + content
+                with open(cookie_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                options['cookiefile'] = cookie_path
+            except Exception as e:
+                print(f"Error writing env cookie: {e}")
+        elif os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
+            options['cookiefile'] = local_cookie
+
+    elif "tiktok.com" in url:
+        options['extractor_args'] = {
+            'tiktok': {
+                'api_hostname': 'api22-normal-c-useast2a.tiktokv.com'
+            }
+        }
+
+    return options
+
+
+async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
+    """Extracts metadata safely with process=False to bypass format selection."""
+    real_url = resolve_url(url)
+    ydl_opts = get_ydl_options_for_url(real_url)
+    ydl_opts['skip_download'] = True
+    ydl_opts['check_formats'] = False
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(real_url, download=False)
+            info = ydl.extract_info(real_url, download=False, process=False)
             if not info:
                 return None
+
             thumb = info.get("thumbnail")
             if not thumb and info.get("thumbnails"):
                 thumb = info.get("thumbnails")[-1].get("url")
 
             return {
                 "id": info.get("id"),
-                "title": info.get("title", "Media Video"),
+                "title": info.get("title", "YouTube Video"),
                 "duration": info.get("duration", 0),
                 "thumbnail": thumb,
-                "platform": "media"
+                "platform": "youtube"
             }
 
     try:
         return await asyncio.to_thread(_extract)
     except Exception as e:
-        print(f"General extraction error: {e}")
+        print(f"Extraction error: {repr(e)}")
         return None
 
 
 async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-    """Performs quick YouTube keyword search."""
+    """Performs quick YouTube keyword search returning top metadata entries."""
     search_spec = f"ytsearch{max_results}:{query}"
     ydl_opts = {
         'quiet': True,
@@ -266,73 +189,101 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
             })
         return results
     except Exception as e:
-        print(f"YouTube search error: {e}")
+        print(f"YouTube search error for query '{query}': {e}")
         return []
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media files via API System for YouTube, yt-dlp for others."""
+    """Downloads media file securely using system yt-dlp command-line subprocess to avoid Python API format locks."""
     real_url = resolve_url(url)
-    yt_id = extract_youtube_id(real_url)
     base_name = os.path.splitext(custom_filename)[0]
-
-    quality_tag = "360"
-    for q in ["1080", "720", "480", "360", "240", "144"]:
-        if q in custom_filename or q in format_spec:
-            quality_tag = q
-            break
-
-    is_audio = "mp3" in custom_filename.lower() or "mp3" in format_spec.lower()
-    if is_audio:
-        quality_tag = "mp3"
-
-    ext = "mp3" if is_audio else "mp4"
-    dest_path = os.path.join(DOWNLOAD_DIR, f"{base_name}.{ext}")
-
-    # 1. YouTube Multi-API Extraction
-    if yt_id:
-        print(f"Downloading YouTube video {yt_id} via API Network...")
-        success = await asyncio.to_thread(download_youtube_via_api, yt_id, quality_tag, dest_path)
-        if success and os.path.exists(dest_path):
-            return dest_path
-
-    # 2. Non-YouTube platforms (TikTok, FB, Insta, Pinterest) via yt-dlp
     outtmpl = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
+
+    is_audio = "mp3" in format_spec.lower() or "mp3" in custom_filename.lower()
+
+    # Build yt-dlp command with valid flags
     cmd = [
         "yt-dlp",
         "--no-warnings",
         "--geo-bypass",
         "--no-check-certificates",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
         "-o", outtmpl
     ]
+
+    # Add specific extractor options for YouTube and TikTok in CLI command
+    if any(domain in real_url for domain in ["youtube.com", "youtu.be"]):
+        cmd.extend(["--extractor-args", "youtube:player_client=mweb,android,web"])
+    elif "tiktok.com" in real_url:
+        cmd.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
+
+    # Cookie check
+    env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
+    local_cookie = os.path.join(BASE_DIR, "cookies.txt")
+    cookie_file_to_use = None
+
+    if env_cookie and len(env_cookie.strip()) > 30:
+        cookie_path = '/tmp/youtube_cookies.txt'
+        try:
+            content = env_cookie.strip()
+            if not content.startswith('# Netscape'):
+                content = '# Netscape HTTP Cookie File\n' + content
+            with open(cookie_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            cookie_file_to_use = cookie_path
+        except Exception:
+            pass
+    elif os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
+        cookie_file_to_use = local_cookie
+
+    if cookie_file_to_use:
+        cmd.extend(["--cookies", cookie_file_to_use])
 
     if is_audio:
         cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "192K"])
     else:
-        cmd.extend(["-f", "b/best", "--merge-output-format", "mp4"])
+        # Improved format selection to support YouTube adaptive streams
+        cmd.extend(["-f", "bv*+ba/b/best", "--merge-output-format", "mp4"])
 
     cmd.append(real_url)
 
     def _run_sub():
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            print(f"Subprocess stdout: {result.stdout}")
+            print(f"Subprocess stderr: {result.stderr}")
             return result.returncode == 0
         except Exception as ex:
             print(f"Subprocess exception: {ex}")
             return False
 
     success = await asyncio.to_thread(_run_sub)
-    if success:
-        matching = glob.glob(os.path.join(DOWNLOAD_DIR, f"{base_name}.*"))
-        for f in matching:
-            if not f.endswith(".part") and not f.endswith(".ytdl"):
-                return f
+
+    # Fallback to download Pinterest Photo if yt-dlp fails (e.g. No video formats found)
+    if not success and "pinterest" in real_url:
+        fallback_img_path = os.path.join(DOWNLOAD_DIR, f"{base_name}.jpg")
+        img_success = await asyncio.to_thread(download_pinterest_image_fallback, real_url, fallback_img_path)
+        if img_success:
+            return fallback_img_path
+
+    if not success:
+        return None
+
+    if is_audio:
+        expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
+        if os.path.exists(expected_mp3):
+            return expected_mp3
+
+    matching = glob.glob(os.path.join(DOWNLOAD_DIR, f"{base_name}.*"))
+    for f in matching:
+        if not f.endswith(".part") and not f.endswith(".ytdl"):
+            return f
 
     return None
 
 
 def cleanup_file(file_path: Optional[str]):
-    """Safely removes temporary files."""
+    """Safely removes temporary media files from disk after processing/sending."""
     if file_path and os.path.exists(file_path):
         try:
             os.remove(file_path)
