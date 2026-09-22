@@ -14,7 +14,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def resolve_url(url: str) -> str:
-    """Follows redirects for short links (pin.it, vt.tiktok.com) and cleans tracking params."""
+    """Follows redirects for short links and cleans tracking parameters."""
     target_url = url.strip()
 
     if "pin.it" in target_url:
@@ -41,63 +41,31 @@ def resolve_url(url: str) -> str:
     return target_url
 
 
-def download_via_cobalt_api(url: str, quality: str, dest_path: str) -> bool:
-    """Uses open-source Cobalt API to bypass YouTube Datacenter/Heroku IP restrictions."""
-    try:
-        cobalt_url = "https://api.cobalt.tools/api/json"
-        
-        # Map qualities to Cobalt formats
-        video_quality = "720"
-        if quality in ["1080", "720", "480", "360", "240", "144"]:
-            video_quality = quality
+def prepare_cookie_file() -> Optional[str]:
+    """Prepares netscape cookie file from Heroku Environment variable or local file."""
+    cookie_path = '/tmp/youtube_cookies.txt'
+    env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
+    local_cookie = os.path.join(BASE_DIR, "cookies.txt")
 
-        is_audio = quality.lower() == "mp3"
+    if env_cookie and len(env_cookie.strip()) > 30:
+        try:
+            content = env_cookie.strip()
+            if not content.startswith('# Netscape'):
+                content = '# Netscape HTTP Cookie File\n' + content
+            with open(cookie_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return cookie_path
+        except Exception as e:
+            print(f"Error writing env cookie: {e}")
 
-        payload = {
-            "url": url,
-            "videoQuality": video_quality,
-            "downloadMode": "audio" if is_audio else "auto",
-            "audioFormat": "mp3" if is_audio else "best"
-        }
+    if os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
+        return local_cookie
 
-        req = urllib.request.Request(
-            cobalt_url,
-            data=json.dumps(payload).encode('utf-8'),
-            headers={
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-            },
-            method='POST'
-        )
-
-        with urllib.request.urlopen(req, timeout=30) as response:
-            res_data = json.loads(response.read().decode('utf-8'))
-            
-            download_link = None
-            if res_data.get("status") in ["tunnel", "redirect"]:
-                download_link = res_data.get("url")
-            elif res_data.get("status") == "picker":
-                picker = res_data.get("picker", [])
-                if picker:
-                    download_link = picker[0].get("url")
-
-            if download_link:
-                dl_req = urllib.request.Request(
-                    download_link,
-                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-                )
-                with urllib.request.urlopen(dl_req, timeout=120) as media_resp:
-                    with open(dest_path, 'wb') as f:
-                        f.write(media_resp.read())
-                return os.path.exists(dest_path) and os.path.getsize(dest_path) > 10000
-    except Exception as e:
-        print(f"Cobalt API Download Exception: {e}")
-    return False
+    return None
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations."""
+    """Provides optimized yt-dlp configurations with authentication cookies."""
     options = {
         'quiet': True,
         'no_warnings': True,
@@ -110,17 +78,21 @@ def get_ydl_options_for_url(url: str) -> dict:
         }
     }
 
+    cookie_file = prepare_cookie_file()
+    if cookie_file:
+        options['cookiefile'] = cookie_file
+
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['ios', 'android']
+                'player_client': ['ios', 'android', 'mweb']
             }
         }
     return options
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata safely."""
+    """Extracts video metadata safely."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
@@ -147,7 +119,7 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
         return await asyncio.to_thread(_extract)
     except Exception as e:
         print(f"Extraction error: {repr(e)}")
-        # Basic fallback metadata if extraction is blocked
+        # Default metadata fallback
         return {
             "id": "media_id",
             "title": "Downloaded Video",
@@ -158,7 +130,7 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
 
 
 async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-    """Performs quick YouTube search."""
+    """Performs quick YouTube keyword search."""
     search_spec = f"ytsearch{max_results}:{query}"
     ydl_opts = {
         'quiet': True,
@@ -198,31 +170,11 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media using Cobalt API first, with yt-dlp fallback."""
+    """Downloads media file via optimized yt-dlp process with cookie support."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
-    is_audio = "mp3" in custom_filename.lower() or "mp3" in format_spec.lower()
-    ext = "mp3" if is_audio else "mp4"
-    dest_file_path = os.path.join(DOWNLOAD_DIR, f"{base_name}.{ext}")
-
-    quality_tag = "720"
-    for q in ["1080", "720", "480", "360", "240", "144"]:
-        if q in custom_filename or q in format_spec:
-            quality_tag = q
-            break
-    if is_audio:
-        quality_tag = "mp3"
-
-    # Step 1: Attempt Cobalt API Download (Bypasses YouTube Heroku IP Restrictions)
-    print(f"Attempting Cobalt API download for: {real_url}")
-    cobalt_success = await asyncio.to_thread(download_via_cobalt_api, real_url, quality_tag, dest_file_path)
-    if cobalt_success and os.path.exists(dest_file_path):
-        print("Cobalt API Download Successful!")
-        return dest_file_path
-
-    # Step 2: Fallback to Subprocess yt-dlp with flexible format options
-    print("Cobalt API failed/skipped. Falling back to yt-dlp...")
     outtmpl = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
+    is_audio = "mp3" in custom_filename.lower() or "mp3" in format_spec.lower()
 
     cmd = [
         "yt-dlp",
@@ -233,13 +185,17 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
         "-o", outtmpl
     ]
 
+    # Cookie Injection
+    cookie_file = prepare_cookie_file()
+    if cookie_file:
+        cmd.extend(["--cookies", cookie_file])
+
     if any(domain in real_url for domain in ["youtube.com", "youtu.be"]):
-        cmd.extend(["--extractor-args", "youtube:player_client=ios,android"])
+        cmd.extend(["--extractor-args", "youtube:player_client=ios,android,mweb"])
 
     if is_audio:
         cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "192K"])
     else:
-        # Flexible format specification for YouTube
         cmd.extend(["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/b/best", "--merge-output-format", "mp4"])
 
     cmd.append(real_url)
@@ -247,6 +203,9 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     def _run_sub():
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            print(f"yt-dlp output: {result.stdout}")
+            if result.returncode != 0:
+                print(f"yt-dlp error: {result.stderr}")
             return result.returncode == 0
         except Exception as ex:
             print(f"Subprocess exception: {ex}")
