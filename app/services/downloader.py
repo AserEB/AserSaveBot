@@ -3,10 +3,10 @@ import glob
 import re
 import asyncio
 import urllib.request
-import traceback
+import json
+import subprocess
 from typing import Dict, Any, Optional, List
 import yt_dlp
-import subprocess
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
@@ -30,7 +30,6 @@ def resolve_url(url: str) -> str:
         except Exception as e:
             print(f"Error resolving Pinterest url: {e}")
 
-    # Clean Pinterest tracking parameters and extra paths
     if "pinterest.com/pin/" in target_url:
         match = re.search(r'(https?://[^\s]+/pin/\d+)', target_url)
         if match:
@@ -42,44 +41,69 @@ def resolve_url(url: str) -> str:
     return target_url
 
 
-def download_pinterest_image_fallback(url: str, dest_path: str) -> bool:
-    """Fallback helper to download Pinterest photos when yt-dlp finds no video formats."""
+def download_via_cobalt_api(url: str, quality: str, dest_path: str) -> bool:
+    """Uses open-source Cobalt API to bypass YouTube Datacenter/Heroku IP restrictions."""
     try:
+        cobalt_url = "https://api.cobalt.tools/api/json"
+        
+        # Map qualities to Cobalt formats
+        video_quality = "720"
+        if quality in ["1080", "720", "480", "360", "240", "144"]:
+            video_quality = quality
+
+        is_audio = quality.lower() == "mp3"
+
+        payload = {
+            "url": url,
+            "videoQuality": video_quality,
+            "downloadMode": "audio" if is_audio else "auto",
+            "audioFormat": "mp3" if is_audio else "best"
+        }
+
         req = urllib.request.Request(
-            url,
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'}
+            cobalt_url,
+            data=json.dumps(payload).encode('utf-8'),
+            headers={
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+            },
+            method='POST'
         )
-        with urllib.request.urlopen(req, timeout=15) as response:
-            html = response.read().decode('utf-8', errors='ignore')
-            match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html) or \
-                    re.search(r'<meta\s+name="og:image"\s+content="([^"]+)"', html)
+
+        with urllib.request.urlopen(req, timeout=30) as response:
+            res_data = json.loads(response.read().decode('utf-8'))
             
-            if match:
-                img_url = match.group(1)
-                img_url = re.sub(r'/(236x|474x|736x)/', '/originals/', img_url)
-                
-                img_req = urllib.request.Request(
-                    img_url,
+            download_link = None
+            if res_data.get("status") in ["tunnel", "redirect"]:
+                download_link = res_data.get("url")
+            elif res_data.get("status") == "picker":
+                picker = res_data.get("picker", [])
+                if picker:
+                    download_link = picker[0].get("url")
+
+            if download_link:
+                dl_req = urllib.request.Request(
+                    download_link,
                     headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                 )
-                with urllib.request.urlopen(img_req, timeout=20) as img_resp:
+                with urllib.request.urlopen(dl_req, timeout=120) as media_resp:
                     with open(dest_path, 'wb') as f:
-                        f.write(img_resp.read())
-                return os.path.exists(dest_path) and os.path.getsize(dest_path) > 1000
+                        f.write(media_resp.read())
+                return os.path.exists(dest_path) and os.path.getsize(dest_path) > 10000
     except Exception as e:
-        print(f"Pinterest image fallback error: {e}")
+        print(f"Cobalt API Download Exception: {e}")
     return False
 
 
 def get_ydl_options_for_url(url: str) -> dict:
-    """Provides optimized yt-dlp configurations using clean cookies."""
+    """Provides optimized yt-dlp configurations."""
     options = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
-        'source_address': '0.0.0.0',
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
@@ -89,47 +113,21 @@ def get_ydl_options_for_url(url: str) -> dict:
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['ios', 'android']
             }
         }
-
-        env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
-        local_cookie = os.path.join(BASE_DIR, "cookies.txt")
-
-        if env_cookie and len(env_cookie.strip()) > 30:
-            cookie_path = '/tmp/youtube_cookies.txt'
-            try:
-                content = env_cookie.strip()
-                if not content.startswith('# Netscape'):
-                    content = '# Netscape HTTP Cookie File\n' + content
-                with open(cookie_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                options['cookiefile'] = cookie_path
-            except Exception as e:
-                print(f"Error writing env cookie: {e}")
-        elif os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
-            options['cookiefile'] = local_cookie
-
-    elif "tiktok.com" in url:
-        options['extractor_args'] = {
-            'tiktok': {
-                'api_hostname': 'api22-normal-c-useast2a.tiktokv.com'
-            }
-        }
-
     return options
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata safely with process=False to bypass format selection."""
+    """Extracts metadata safely."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
-    ydl_opts['check_formats'] = False
 
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(real_url, download=False, process=False)
+            info = ydl.extract_info(real_url, download=False)
             if not info:
                 return None
 
@@ -149,11 +147,18 @@ async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
         return await asyncio.to_thread(_extract)
     except Exception as e:
         print(f"Extraction error: {repr(e)}")
-        return None
+        # Basic fallback metadata if extraction is blocked
+        return {
+            "id": "media_id",
+            "title": "Downloaded Video",
+            "duration": 0,
+            "thumbnail": None,
+            "platform": "youtube" if any(domain in real_url for domain in ["youtube.com", "youtu.be"]) else "media"
+        }
 
 
 async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-    """Performs quick YouTube keyword search returning top metadata entries."""
+    """Performs quick YouTube search."""
     search_spec = f"ytsearch{max_results}:{query}"
     ydl_opts = {
         'quiet': True,
@@ -188,19 +193,37 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
             })
         return results
     except Exception as e:
-        print(f"YouTube search error for query '{query}': {e}")
+        print(f"YouTube search error: {e}")
         return []
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media file securely using system yt-dlp command-line subprocess."""
+    """Downloads media using Cobalt API first, with yt-dlp fallback."""
     real_url = resolve_url(url)
     base_name = os.path.splitext(custom_filename)[0]
+    is_audio = "mp3" in custom_filename.lower() or "mp3" in format_spec.lower()
+    ext = "mp3" if is_audio else "mp4"
+    dest_file_path = os.path.join(DOWNLOAD_DIR, f"{base_name}.{ext}")
+
+    quality_tag = "720"
+    for q in ["1080", "720", "480", "360", "240", "144"]:
+        if q in custom_filename or q in format_spec:
+            quality_tag = q
+            break
+    if is_audio:
+        quality_tag = "mp3"
+
+    # Step 1: Attempt Cobalt API Download (Bypasses YouTube Heroku IP Restrictions)
+    print(f"Attempting Cobalt API download for: {real_url}")
+    cobalt_success = await asyncio.to_thread(download_via_cobalt_api, real_url, quality_tag, dest_file_path)
+    if cobalt_success and os.path.exists(dest_file_path):
+        print("Cobalt API Download Successful!")
+        return dest_file_path
+
+    # Step 2: Fallback to Subprocess yt-dlp with flexible format options
+    print("Cobalt API failed/skipped. Falling back to yt-dlp...")
     outtmpl = os.path.join(DOWNLOAD_DIR, f"{base_name}.%(ext)s")
 
-    is_audio = "mp3" in format_spec.lower() or "mp3" in custom_filename.lower()
-
-    # Build yt-dlp command
     cmd = [
         "yt-dlp",
         "--no-warnings",
@@ -211,77 +234,36 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     ]
 
     if any(domain in real_url for domain in ["youtube.com", "youtu.be"]):
-        cmd.extend(["--extractor-args", "youtube:player_client=android,web"])
-    elif "tiktok.com" in real_url:
-        cmd.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
-
-    # Cookie check
-    env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
-    local_cookie = os.path.join(BASE_DIR, "cookies.txt")
-    cookie_file_to_use = None
-
-    if env_cookie and len(env_cookie.strip()) > 30:
-        cookie_path = '/tmp/youtube_cookies.txt'
-        try:
-            content = env_cookie.strip()
-            if not content.startswith('# Netscape'):
-                content = '# Netscape HTTP Cookie File\n' + content
-            with open(cookie_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            cookie_file_to_use = cookie_path
-        except Exception:
-            pass
-    elif os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
-        cookie_file_to_use = local_cookie
-
-    if cookie_file_to_use:
-        cmd.extend(["--cookies", cookie_file_to_use])
+        cmd.extend(["--extractor-args", "youtube:player_client=ios,android"])
 
     if is_audio:
         cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "192K"])
     else:
-        # የተመረጠውን format_spec በትክክል እንዲጠቀም ተደርጓል
-        cmd.extend(["-f", format_spec, "--merge-output-format", "mp4"])
+        # Flexible format specification for YouTube
+        cmd.extend(["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/b/best", "--merge-output-format", "mp4"])
 
     cmd.append(real_url)
 
     def _run_sub():
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            print(f"Subprocess stdout: {result.stdout}")
-            print(f"Subprocess stderr: {result.stderr}")
             return result.returncode == 0
         except Exception as ex:
             print(f"Subprocess exception: {ex}")
             return False
 
     success = await asyncio.to_thread(_run_sub)
-
-    # Fallback for Pinterest Photo if yt-dlp fails
-    if not success and "pinterest" in real_url:
-        fallback_img_path = os.path.join(DOWNLOAD_DIR, f"{base_name}.jpg")
-        img_success = await asyncio.to_thread(download_pinterest_image_fallback, real_url, fallback_img_path)
-        if img_success:
-            return fallback_img_path
-
-    if not success:
-        return None
-
-    if is_audio:
-        expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
-        if os.path.exists(expected_mp3):
-            return expected_mp3
-
-    matching = glob.glob(os.path.join(DOWNLOAD_DIR, f"{base_name}.*"))
-    for f in matching:
-        if not f.endswith(".part") and not f.endswith(".ytdl"):
-            return f
+    if success:
+        matching = glob.glob(os.path.join(DOWNLOAD_DIR, f"{base_name}.*"))
+        for f in matching:
+            if not f.endswith(".part") and not f.endswith(".ytdl"):
+                return f
 
     return None
 
 
 def cleanup_file(file_path: Optional[str]):
-    """Safely removes temporary media files from disk after processing/sending."""
+    """Safely removes temporary files."""
     if file_path and os.path.exists(file_path):
         try:
             os.remove(file_path)
