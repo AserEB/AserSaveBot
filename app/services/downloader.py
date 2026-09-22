@@ -101,6 +101,7 @@ def get_ydl_options_for_url(url: str) -> dict:
         'noplaylist': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
+        'format': 'b/best',  # ተለዋዋጭ ፎርማት እንዲጠቀም ያደርጋል
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
@@ -110,7 +111,8 @@ def get_ydl_options_for_url(url: str) -> dict:
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
         options['extractor_args'] = {
             'youtube': {
-                'player_client': ['ios', 'android', 'mweb']
+                'player_client': ['mweb', 'ios', 'android', 'web'],
+                'formats': ['missing_pot']
             }
         }
 
@@ -234,7 +236,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     ]
 
     if any(domain in real_url for domain in ["youtube.com", "youtu.be"]):
-        cmd.extend(["--extractor-args", "youtube:player_client=ios,android,mweb"])
+        cmd.extend(["--extractor-args", "youtube:player_client=mweb,ios,android,web;formats=missing_pot"])
     elif "tiktok.com" in real_url:
         cmd.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
 
@@ -243,10 +245,10 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
         cmd.extend(["--cookies", cookie_file_to_use])
 
     if is_audio:
-        audio_fmt = format_spec if format_spec and "bv" not in format_spec else "ba/ba*/bestaudio/best"
+        audio_fmt = format_spec if format_spec and "bv" not in format_spec else "ba/ba*/bestaudio/b/best"
         cmd.extend(["-f", audio_fmt, "-x", "--audio-format", "mp3", "--audio-quality", "192K"])
     else:
-        video_fmt = format_spec if format_spec else "bv*[height<=360]+ba/b/best"
+        video_fmt = format_spec if format_spec else "bv*[height<=360]+ba/b[height<=360]/b/best"
         cmd.extend(["-f", video_fmt, "--merge-output-format", "mp4"])
 
     cmd.append(real_url)
