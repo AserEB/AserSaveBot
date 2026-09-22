@@ -42,6 +42,36 @@ def resolve_url(url: str) -> str:
     return target_url
 
 
+def download_pinterest_image_fallback(url: str, dest_path: str) -> bool:
+    """Fallback helper to download Pinterest photos when yt-dlp finds no video formats."""
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'}
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            html = response.read().decode('utf-8', errors='ignore')
+            match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html) or \
+                    re.search(r'<meta\s+name="og:image"\s+content="([^"]+)"', html)
+            
+            if match:
+                img_url = match.group(1)
+                # Upgrade image quality to original resolution if possible
+                img_url = re.sub(r'/(236x|474x|736x)/', '/originals/', img_url)
+                
+                img_req = urllib.request.Request(
+                    img_url,
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                )
+                with urllib.request.urlopen(img_req, timeout=20) as img_resp:
+                    with open(dest_path, 'wb') as f:
+                        f.write(img_resp.read())
+                return os.path.exists(dest_path) and os.path.getsize(dest_path) > 1000
+    except Exception as e:
+        print(f"Pinterest image fallback error: {e}")
+    return False
+
+
 def get_ydl_options_for_url(url: str) -> dict:
     """Provides optimized yt-dlp configurations using clean cookies."""
     options = {
@@ -212,7 +242,8 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     if is_audio:
         cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "192K"])
     else:
-        cmd.extend(["-f", "b/best"])
+        # Improved format selection to support YouTube adaptive streams
+        cmd.extend(["-f", "bv*+ba/b/best", "--merge-output-format", "mp4"])
 
     cmd.append(real_url)
 
@@ -227,6 +258,14 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
             return False
 
     success = await asyncio.to_thread(_run_sub)
+
+    # Fallback to download Pinterest Photo if yt-dlp fails (e.g. No video formats found)
+    if not success and "pinterest" in real_url:
+        fallback_img_path = os.path.join(DOWNLOAD_DIR, f"{base_name}.jpg")
+        img_success = await asyncio.to_thread(download_pinterest_image_fallback, real_url, fallback_img_path)
+        if img_success:
+            return fallback_img_path
+
     if not success:
         return None
 
