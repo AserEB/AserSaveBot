@@ -212,7 +212,9 @@ async def process_media_download(callback: CallbackQuery):
 
         await callback.message.edit_text("⚡️ <i>File exceeds 50MB. Compressing strictly under 40MB with FFmpeg... 📊</i>", parse_mode="HTML")
         compressed_path = await compressor.compress_video_to_size(downloaded_path, target_size_mb=40.0)
-        downloader.cleanup_file(downloaded_path)
+        if compressed_path and os.path.exists(compressed_path):
+         if compressed_path != downloaded_path:
+          downloader.cleanup_file(downloaded_path)
         downloaded_path = compressed_path
 
     if not downloaded_path or not os.path.exists(downloaded_path):
