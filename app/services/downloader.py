@@ -171,12 +171,12 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
 
     is_audio = "mp3" in format_spec.lower() or "mp3" in custom_filename.lower()
 
-    # Build yt-dlp command with headers and flags
+    # Build yt-dlp command with valid flags
     cmd = [
         "yt-dlp",
         "--no-warnings",
         "--geo-bypass",
-        "--nocheckcertificate",
+        "--no-check-certificates",
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
         "-o", outtmpl
     ]
