@@ -45,8 +45,18 @@ def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_download_options_keyboard(video_id: str, is_premium: bool = False) -> InlineKeyboardMarkup:
-    """Builds media quality choices for download (1080p, 720p, 480p, 360p, 240p, 144p, MP3 Audio, Thumbnail)."""
+def get_download_options_keyboard(video_id: str, is_premium: bool = False, platform: str = "youtube") -> InlineKeyboardMarkup:
+    """Builds media quality choices for download (1080p, 720p, 480p, 360p, 240p, 144p, MP3 Audio, Thumbnail/Image)."""
+    
+    # ዩቲዩብ ከሆነ "Thumbnail"፣ ፒንተረስት ከሆነ "Image" እንዲል ማድረግ
+    if platform.lower() in ["youtube", "yt"]:
+        img_button_text = "🖼️ Thumbnail"
+    else:
+        img_button_text = "🖼️ Image"
+
+    if not is_premium:
+        img_button_text += " 🔒 (Premium)"
+
     buttons = [
         [
             InlineKeyboardButton(
@@ -84,7 +94,7 @@ def get_download_options_keyboard(video_id: str, is_premium: bool = False) -> In
                 callback_data=f"dl:mp3:{video_id}"
             ),
             InlineKeyboardButton(
-                text="🖼️ Thumbnail " + ("" if is_premium else "🔒 (Premium)"), 
+                text=img_button_text, 
                 callback_data=f"dl:thumb:{video_id}"
             )
         ],
