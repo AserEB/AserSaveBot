@@ -84,9 +84,10 @@ async def handle_url_message(message: Message):
         f"👇 Select desired resolution or audio format:"
     )
 
+    # platform=platform.lower() እዚህ ጋር ተጨምሯል (ለ YouTube Thumbnail፣ ለሌላው Image ይላል)
     await processing_msg.edit_text(
         text=info_text,
-        reply_markup=inline.get_download_options_keyboard(session_id, is_premium=is_premium),
+        reply_markup=inline.get_download_options_keyboard(session_id, is_premium=is_premium, platform=platform.lower()),
         parse_mode="HTML"
     )
 
@@ -111,30 +112,56 @@ async def process_media_download(callback: CallbackQuery):
     user = crud.get_or_create_user(callback.from_user.id, callback.from_user.full_name or "User")
     is_premium = user.get("is_premium") or callback.from_user.id in getattr(config, "ADMIN_IDS", [])
 
-    # Enforce premium for 1080p or Thumbnails
+    platform_name = session.get("platform", "media")
+    btn_label = "Thumbnail" if platform_name in ["youtube", "yt"] else "Image"
+
+    # Enforce premium for 1080p or Thumbnails/Images
     if quality in ["1080", "thumb"] and not is_premium:
-        await callback.message.answer("🔒 1080p FHD and Thumbnail downloads are exclusive to Premium users!")
+        await callback.message.answer(f"🔒 1080p FHD and {btn_label} downloads are exclusive to Premium users!")
         return
 
-    # Handle Thumbnail Request
+    # Handle Thumbnail / Image Request
     if quality == "thumb":
+        await callback.message.edit_text(f"⏳ <i>Fetching {btn_label}...</i>", parse_mode="HTML")
+        
+        # 1. መጀመሪያ በኮዱ የተያዘው Thumbnail URL ካለ እንሞክራለን
         thumb_url = session.get("thumbnail")
         if thumb_url:
+            try:
+                await callback.message.delete()
+                await callback.message.answer_photo(
+                    photo=thumb_url,
+                    caption=f"🖼 <b>{btn_label}:</b> {session['title']}\n\n<i>Downloaded via @AserSaveBot</i>",
+                    parse_mode="HTML"
+                )
+                crud.record_successful_download(callback.from_user.id, action_type=platform_name)
+                DOWNLOAD_SESSIONS.pop(session_id, None)
+                return
+            except Exception:
+                pass
+
+        # 2. ካልሆነ በ Downloader በኩል ፎቶውን አውርደን እንልካለን
+        filename = f"{session_id}_image.jpg"
+        downloaded_img = await downloader.download_media_file(session['url'], "thumb", filename)
+        if downloaded_img and os.path.exists(downloaded_img):
+            input_file = FSInputFile(downloaded_img)
             await callback.message.delete()
             await callback.message.answer_photo(
-                photo=thumb_url,
-                caption=f"🖼 <b>Thumbnail:</b> {session['title']}\n\n<i>Downloaded via @AserSaveBot</i>",
+                photo=input_file,
+                caption=f"🖼 <b>{btn_label}:</b> {session['title']}\n\n<i>Downloaded via @AserSaveBot</i>",
                 parse_mode="HTML"
             )
-            crud.record_successful_download(callback.from_user.id, action_type=session.get("platform", "media"))
+            crud.record_successful_download(callback.from_user.id, action_type=platform_name)
+            downloader.cleanup_file(downloaded_img)
             DOWNLOAD_SESSIONS.pop(session_id, None)
+            return
         else:
-            await callback.message.answer("❌ Thumbnail not available for this media.")
-        return
+            await callback.message.edit_text(f"❌ {btn_label} not available for this media link.")
+            DOWNLOAD_SESSIONS.pop(session_id, None)
+            return
 
     await callback.message.edit_text("⏳ <i>Downloading media file to server... 📊 [████░░░░░░] 40%</i>", parse_mode="HTML")
 
-    # የተስተካከለ እና ፎርማት እንዳይጠፋ የሚያረጋግጥ የተረጋጋ Format Map
     format_map = {
         "1080": "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b/best",
         "720": "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b/best",
@@ -151,14 +178,32 @@ async def process_media_download(callback: CallbackQuery):
 
     downloaded_path = await downloader.download_media_file(session['url'], format_spec, filename)
 
+    # 1. ሊንኩ ቪዲዮ ሳይሆን ፎቶ ሆኖ የወረደ ከሆነ
+    if downloaded_path and downloaded_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+        try:
+            input_file = FSInputFile(downloaded_path)
+            caption = f"🖼 <b>{btn_label}:</b> {session['title']}\n\n<i>Downloaded via @AserSaveBot</i>"
+            await callback.message.delete()
+            await callback.message.answer_photo(photo=input_file, caption=caption, parse_mode="HTML")
+            crud.record_successful_download(callback.from_user.id, action_type=platform_name)
+        finally:
+            downloader.cleanup_file(downloaded_path)
+            DOWNLOAD_SESSIONS.pop(session_id, None)
+        return
+
+    # 2. ማውረድ ካልተቻለ (ተጠቃሚው የፎቶ ሊንክ ልኮ የቪዲዮ ጥራት ሲመርጥ)
     if not downloaded_path or not os.path.exists(downloaded_path):
-        await callback.message.edit_text("❌ Download failed. The video format might be restricted.")
+        error_msg = (
+            f"⚠️ <b>Your link is not a video, it is an image!</b>\n\n"
+            f"Please click the <b>🖼 {btn_label}</b> button to get the photo, or send a valid video link."
+        )
+        await callback.message.edit_text(error_msg, parse_mode="HTML")
         DOWNLOAD_SESSIONS.pop(session_id, None)
         return
 
     file_size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
 
-    # የቴሌግራም የ 50MB ፋይል ገደብ መፈተሻ
+    # Telegram 50MB Limit Check
     if file_size_mb > 48.0 and quality != "mp3":
         if not is_premium:
             downloader.cleanup_file(downloaded_path)
@@ -166,12 +211,12 @@ async def process_media_download(callback: CallbackQuery):
                 f"⚠️ <b>The video quality MB is high ({file_size_mb:.1f} MB)!</b>\n\n"
                 f"Telegram restricts free bots from uploading files larger than <b>50MB</b>.\n\n"
                 f"👇 <b>Please choose a lower quality (360p, 240p, 144p, or MP3) below:</b>",
-                reply_markup=inline.get_download_options_keyboard(session_id, is_premium=False),
+                reply_markup=inline.get_download_options_keyboard(session_id, is_premium=False, platform=platform_name),
                 parse_mode="HTML"
             )
             return
 
-        # ለ Premium ተጠቃሚዎች በጥብቅ ከ 40MB በታች ኮምፕረስ ማድረግ
+        # Compressing for Premium users
         await callback.message.edit_text("⚡️ <i>File exceeds 50MB. Compressing strictly under 40MB with FFmpeg... 📊</i>", parse_mode="HTML")
         compressed_path = await compressor.compress_video_to_size(downloaded_path, target_size_mb=40.0)
         downloader.cleanup_file(downloaded_path)
@@ -193,7 +238,7 @@ async def process_media_download(callback: CallbackQuery):
         else:
             await callback.message.answer_video(video=input_file, caption=caption, parse_mode="HTML")
 
-        crud.record_successful_download(callback.from_user.id, action_type=session.get("platform", "media"))
+        crud.record_successful_download(callback.from_user.id, action_type=platform_name)
         await callback.message.delete()
 
     except (TelegramBadRequest, TelegramEntityTooLarge) as te:
@@ -201,7 +246,7 @@ async def process_media_download(callback: CallbackQuery):
             await callback.message.answer(
                 f"⚠️ <b>The video quality MB is high!</b>\n\n"
                 f"Telegram rejected this file. Please choose a lower quality below 👇",
-                reply_markup=inline.get_download_options_keyboard(session_id, is_premium=is_premium),
+                reply_markup=inline.get_download_options_keyboard(session_id, is_premium=is_premium, platform=platform_name),
                 parse_mode="HTML"
             )
         else:
