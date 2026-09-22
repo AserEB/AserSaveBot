@@ -13,10 +13,11 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def resolve_url(url: str) -> str:
-    """Follows redirects for short links (pin.it, vt.tiktok.com) and cleans tracking params."""
+    """Follows redirects for short links (pin.it, fb.watch, vt.tiktok.com) and cleans tracking params."""
     target_url = url.strip()
 
-    if "pin.it" in target_url:
+    # Expand short URLs for Pinterest, Facebook, TikTok
+    if any(domain in target_url for domain in ["pin.it", "fb.watch", "vt.tiktok.com", "facebook.com/share"]):
         try:
             req = urllib.request.Request(
                 target_url,
@@ -24,12 +25,12 @@ def resolve_url(url: str) -> str:
             )
             with urllib.request.urlopen(req, timeout=10) as response:
                 resolved = response.geturl()
-                if resolved.rstrip('/') != "https://www.pinterest.com":
+                if resolved:
                     target_url = resolved
         except Exception as e:
-            print(f"Error resolving Pinterest url: {e}")
+            print(f"Error resolving URL: {e}")
 
-    # Clean Pinterest tracking parameters and extra paths
+    # Clean Pinterest tracking parameters
     if "pinterest.com/pin/" in target_url:
         match = re.search(r'(https?://[^\s]+/pin/\d+)', target_url)
         if match:
@@ -56,7 +57,6 @@ def download_pinterest_image_fallback(url: str, dest_path: str) -> bool:
             
             if match:
                 img_url = match.group(1)
-                # Upgrade image quality to original resolution if possible
                 img_url = re.sub(r'/(236x|474x|736x)/', '/originals/', img_url)
                 
                 img_req = urllib.request.Request(
@@ -121,7 +121,7 @@ def get_ydl_options_for_url(url: str) -> dict:
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts metadata safely for YouTube, Instagram, TikTok, and Pinterest."""
+    """Extracts metadata safely for YouTube, Instagram, TikTok, Facebook, and Pinterest."""
     real_url = resolve_url(url)
     ydl_opts = get_ydl_options_for_url(real_url)
     ydl_opts['skip_download'] = True
@@ -253,11 +253,13 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     if cookie_file_to_use:
         cmd.extend(["--cookies", cookie_file_to_use])
 
+    # Audio & Video options configuration
     if is_audio:
-        cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "192K"])
+        audio_fmt = format_spec if format_spec and "bv" not in format_spec else "ba/ba*/bestaudio/best"
+        cmd.extend(["-f", audio_fmt, "-x", "--audio-format", "mp3", "--audio-quality", "192K"])
     else:
-        # Proper video + audio merging for YouTube and Instagram
-        cmd.extend(["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/b/best", "--merge-output-format", "mp4"])
+        video_fmt = format_spec if format_spec else "bv*[height<=360]+ba/b/best"
+        cmd.extend(["-f", video_fmt, "--merge-output-format", "mp4"])
 
     cmd.append(real_url)
 
@@ -266,31 +268,38 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             print(f"Subprocess stdout: {result.stdout}")
             print(f"Subprocess stderr: {result.stderr}")
-            return result.returncode == 0
         except Exception as ex:
             print(f"Subprocess exception: {ex}")
-            return False
+
+        # Verify output existence regardless of yt-dlp exit status (warnings often return non-zero)
+        if is_audio:
+            expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
+            if os.path.exists(expected_mp3) and os.path.getsize(expected_mp3) > 1000:
+                return True
+
+        matching = glob.glob(os.path.join(DOWNLOAD_DIR, f"{base_name}.*"))
+        for f in matching:
+            if not f.endswith(".part") and not f.endswith(".ytdl") and os.path.getsize(f) > 1000:
+                return True
+        return False
 
     success = await asyncio.to_thread(_run_sub)
 
-    # Fallback to Pinterest photo downloader if yt-dlp finds no video stream
+    # Fallback for Pinterest images
     if not success and "pinterest" in real_url:
         fallback_img_path = os.path.join(DOWNLOAD_DIR, f"{base_name}.jpg")
         img_success = await asyncio.to_thread(download_pinterest_image_fallback, real_url, fallback_img_path)
         if img_success:
             return fallback_img_path
 
-    if not success:
-        return None
-
     if is_audio:
         expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
-        if os.path.exists(expected_mp3):
+        if os.path.exists(expected_mp3) and os.path.getsize(expected_mp3) > 1000:
             return expected_mp3
 
     matching = glob.glob(os.path.join(DOWNLOAD_DIR, f"{base_name}.*"))
     for f in matching:
-        if not f.endswith(".part") and not f.endswith(".ytdl"):
+        if not f.endswith(".part") and not f.endswith(".ytdl") and os.path.getsize(f) > 1000:
             return f
 
     return None

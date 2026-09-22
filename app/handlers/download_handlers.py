@@ -159,7 +159,7 @@ async def process_media_download(callback: CallbackQuery):
 
     await callback.message.edit_text("⏳ <i>Downloading media file to server... 📊 [████░░░░░░] 40%</i>", parse_mode="HTML")
 
-    # ለ YouTube አስተማማኝ የሆነ የ Format Spec ማስተካከያ
+    # Format spec map
     format_map = {
         "1080": "bv*[height<=1080]+ba/b[height<=1080]/b/best",
         "720": "bv*[height<=720]+ba/b[height<=720]/b/best",
@@ -176,7 +176,7 @@ async def process_media_download(callback: CallbackQuery):
 
     downloaded_path = await downloader.download_media_file(session['url'], format_spec, filename)
 
-    # 1. ፒንተረስት ወይም ሊንኩ ፎቶ ሆኖ ከወረደ
+    # 1. Image output handler
     if downloaded_path and downloaded_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
         try:
             input_file = FSInputFile(downloaded_path)
@@ -189,7 +189,7 @@ async def process_media_download(callback: CallbackQuery):
             DOWNLOAD_SESSIONS.pop(session_id, None)
         return
 
-    # 2. ማውረድ ከተሳነ (የስህተት መልእክቶች ተለያይተዋል)
+    # 2. Download failed error handling
     if not downloaded_path or not os.path.exists(downloaded_path):
         if platform_name == "pinterest":
             error_msg = (
@@ -238,7 +238,13 @@ async def process_media_download(callback: CallbackQuery):
         caption = f"✨ <b>{session['title']}</b>\n\n<i>Downloaded via @AserSaveBot</i>"
 
         if quality == "mp3":
-            await callback.message.answer_audio(audio=input_file, caption=caption, parse_mode="HTML")
+            await callback.message.answer_audio(
+                audio=input_file,
+                caption=caption,
+                title=session.get('title', 'Audio')[:64],
+                performer="AserSaveBot",
+                parse_mode="HTML"
+            )
         else:
             await callback.message.answer_video(video=input_file, caption=caption, parse_mode="HTML")
 
