@@ -12,12 +12,20 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Piped API Instances for YouTube Direct Stream Extraction
+# Currently Active Invidious & Piped Instances
+INVIDIOUS_INSTANCES = [
+    "https://inv.tux.pizza",
+    "https://invidious.nerdvpn.de",
+    "https://vid.puffyan.us",
+    "https://invidious.drgns.space",
+    "https://invidious.projectsegfau.lt"
+]
+
 PIPED_INSTANCES = [
-    "https://api.piped.video",
-    "https://pipedapi.kavin.rocks",
-    "https://pipedapi.mha.fi",
-    "https://piped-api.garudalinux.org"
+    "https://pipedapi.adminforge.de",
+    "https://pipedapi.tokhmi.xyz",
+    "https://pipedapi.rinuo.cc",
+    "https://pipedapi.astral.ne.jp"
 ]
 
 
@@ -55,8 +63,61 @@ def extract_youtube_id(url: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def download_youtube_via_piped(video_id: str, quality: str, dest_path: str) -> bool:
-    """Downloads YouTube video/audio using Piped Direct Stream API system."""
+def download_youtube_via_api(video_id: str, quality: str, dest_path: str) -> bool:
+    """Attempts YouTube download via active Invidious APIs first, then Piped APIs."""
+    is_audio = quality.lower() == "mp3"
+
+    # Strategy A: Try Invidious Instances
+    for instance in INVIDIOUS_INSTANCES:
+        try:
+            api_url = f"{instance}/api/v1/videos/{video_id}"
+            req = urllib.request.Request(
+                api_url,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            )
+            with urllib.request.urlopen(req, timeout=8) as response:
+                if response.status != 200:
+                    continue
+                data = json.loads(response.read().decode('utf-8'))
+
+            selected_url = None
+
+            if is_audio:
+                adaptive = data.get("adaptiveFormats", [])
+                audio_formats = [f for f in adaptive if str(f.get("type", "")).startswith("audio/")]
+                if audio_formats:
+                    selected_url = audio_formats[0].get("url")
+            else:
+                format_streams = data.get("formatStreams", [])
+                target_q = quality if quality.isdigit() else "360"
+                
+                # Match requested quality
+                for stream in format_streams:
+                    if target_q in str(stream.get("qualityLabel", "")):
+                        selected_url = stream.get("url")
+                        break
+                
+                if not selected_url and format_streams:
+                    selected_url = format_streams[0].get("url")
+
+            if selected_url:
+                dl_req = urllib.request.Request(
+                    selected_url,
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                )
+                with urllib.request.urlopen(dl_req, timeout=120) as stream_resp:
+                    with open(dest_path, 'wb') as f:
+                        while chunk := stream_resp.read(1024 * 64):
+                            f.write(chunk)
+
+                if os.path.exists(dest_path) and os.path.getsize(dest_path) > 10000:
+                    print(f"Successfully downloaded via Invidious API ({instance})")
+                    return True
+        except Exception as e:
+            print(f"Invidious instance {instance} failed: {e}")
+            continue
+
+    # Strategy B: Fallback to Active Piped Instances
     for instance in PIPED_INSTANCES:
         try:
             api_url = f"{instance}/streams/{video_id}"
@@ -64,44 +125,28 @@ def download_youtube_via_piped(video_id: str, quality: str, dest_path: str) -> b
                 api_url,
                 headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
             )
-            with urllib.request.urlopen(req, timeout=12) as response:
+            with urllib.request.urlopen(req, timeout=8) as response:
                 if response.status != 200:
                     continue
                 data = json.loads(response.read().decode('utf-8'))
 
-            selected_stream_url = None
+            selected_url = None
 
-            # Handle MP3 / Audio requests
-            if quality.lower() == "mp3":
+            if is_audio:
                 audio_streams = data.get("audioStreams", [])
                 if audio_streams:
-                    selected_stream_url = audio_streams[0].get("url")
+                    selected_url = audio_streams[0].get("url")
             else:
-                # Handle Video requests
                 video_streams = data.get("videoStreams", [])
-                target_height = int(quality) if quality.isdigit() else 360
+                combined = [s for s in video_streams if s.get("videoOnly") is False]
+                if combined:
+                    selected_url = combined[0].get("url")
+                elif video_streams:
+                    selected_url = video_streams[0].get("url")
 
-                # Match quality or fallback to closest
-                best_match = None
-                for stream in video_streams:
-                    quality_str = str(stream.get("quality", ""))
-                    if str(target_height) in quality_str and stream.get("videoOnly") is False:
-                        best_match = stream.get("url")
-                        break
-
-                if not best_match:
-                    # Fallback to any audio-video combined stream
-                    combined = [s for s in video_streams if s.get("videoOnly") is False]
-                    if combined:
-                        best_match = combined[0].get("url")
-                    elif video_streams:
-                        best_match = video_streams[0].get("url")
-
-                selected_stream_url = best_match
-
-            if selected_stream_url:
+            if selected_url:
                 dl_req = urllib.request.Request(
-                    selected_stream_url,
+                    selected_url,
                     headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                 )
                 with urllib.request.urlopen(dl_req, timeout=120) as stream_resp:
@@ -112,7 +157,6 @@ def download_youtube_via_piped(video_id: str, quality: str, dest_path: str) -> b
                 if os.path.exists(dest_path) and os.path.getsize(dest_path) > 10000:
                     print(f"Successfully downloaded via Piped API ({instance})")
                     return True
-
         except Exception as e:
             print(f"Piped instance {instance} failed: {e}")
             continue
@@ -121,27 +165,26 @@ def download_youtube_via_piped(video_id: str, quality: str, dest_path: str) -> b
 
 
 async def extract_media_info(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts video metadata using Piped API for YouTube or yt-dlp for others."""
+    """Extracts video metadata using Invidious/Piped API for YouTube or yt-dlp for others."""
     real_url = resolve_url(url)
     yt_id = extract_youtube_id(real_url)
 
     if yt_id:
-        # Fast API metadata for YouTube
-        for instance in PIPED_INSTANCES:
+        for instance in INVIDIOUS_INSTANCES:
             try:
-                api_url = f"{instance}/streams/{yt_id}"
+                api_url = f"{instance}/api/v1/videos/{yt_id}"
                 req = urllib.request.Request(
                     api_url,
                     headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                 )
-                with urllib.request.urlopen(req, timeout=10) as response:
+                with urllib.request.urlopen(req, timeout=6) as response:
                     if response.status == 200:
                         data = json.loads(response.read().decode('utf-8'))
                         return {
                             "id": yt_id,
                             "title": data.get("title", "YouTube Video"),
-                            "duration": data.get("duration", 0),
-                            "thumbnail": data.get("thumbnailUrl"),
+                            "duration": data.get("lengthSeconds", 0),
+                            "thumbnail": f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg",
                             "platform": "youtube"
                         }
             except Exception:
@@ -228,7 +271,7 @@ async def search_youtube_videos(query: str, max_results: int = 5) -> List[Dict[s
 
 
 async def download_media_file(url: str, format_spec: str, custom_filename: str) -> Optional[str]:
-    """Downloads media files via Piped API System for YouTube, yt-dlp for others."""
+    """Downloads media files via API System for YouTube, yt-dlp for others."""
     real_url = resolve_url(url)
     yt_id = extract_youtube_id(real_url)
     base_name = os.path.splitext(custom_filename)[0]
@@ -246,10 +289,10 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     ext = "mp3" if is_audio else "mp4"
     dest_path = os.path.join(DOWNLOAD_DIR, f"{base_name}.{ext}")
 
-    # 1. YouTube Direct Stream API System
+    # 1. YouTube Multi-API Extraction
     if yt_id:
-        print(f"Downloading YouTube video {yt_id} via Piped Stream API System...")
-        success = await asyncio.to_thread(download_youtube_via_piped, yt_id, quality_tag, dest_path)
+        print(f"Downloading YouTube video {yt_id} via API Network...")
+        success = await asyncio.to_thread(download_youtube_via_api, yt_id, quality_tag, dest_path)
         if success and os.path.exists(dest_path):
             return dest_path
 
