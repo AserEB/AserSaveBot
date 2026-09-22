@@ -12,6 +12,30 @@ DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
+def get_cookie_file_path() -> Optional[str]:
+    """Reads Heroku Config Var or Local cookies.txt and creates a temporary cookie file."""
+    env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
+    local_cookie = os.path.join(BASE_DIR, "cookies.txt")
+
+    if env_cookie and len(env_cookie.strip()) > 30:
+        cookie_path = '/tmp/youtube_cookies.txt'
+        try:
+            content = env_cookie.strip()
+            content = content.replace('\\n', '\n')
+            if not content.startswith('# Netscape'):
+                content = '# Netscape HTTP Cookie File\n' + content
+            with open(cookie_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return cookie_path
+        except Exception as e:
+            print(f"Error writing env cookie: {e}")
+
+    if os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
+        return local_cookie
+
+    return None
+
+
 def resolve_url(url: str) -> str:
     """Follows redirects for short links (pin.it, fb.watch, vt.tiktok.com) and cleans tracking params."""
     target_url = url.strip()
@@ -90,22 +114,9 @@ def get_ydl_options_for_url(url: str) -> dict:
             }
         }
 
-        env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
-        local_cookie = os.path.join(BASE_DIR, "cookies.txt")
-
-        if env_cookie and len(env_cookie.strip()) > 30:
-            cookie_path = '/tmp/youtube_cookies.txt'
-            try:
-                content = env_cookie.strip()
-                if not content.startswith('# Netscape'):
-                    content = '# Netscape HTTP Cookie File\n' + content
-                with open(cookie_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                options['cookiefile'] = cookie_path
-            except Exception as e:
-                print(f"Error writing env cookie: {e}")
-        elif os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
-            options['cookiefile'] = local_cookie
+        cookie_path = get_cookie_file_path()
+        if cookie_path:
+            options['cookiefile'] = cookie_path
 
     elif "tiktok.com" in url:
         options['extractor_args'] = {
@@ -227,24 +238,7 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     elif "tiktok.com" in real_url:
         cmd.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
 
-    env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
-    local_cookie = os.path.join(BASE_DIR, "cookies.txt")
-    cookie_file_to_use = None
-
-    if env_cookie and len(env_cookie.strip()) > 30:
-        cookie_path = '/tmp/youtube_cookies.txt'
-        try:
-            content = env_cookie.strip()
-            if not content.startswith('# Netscape'):
-                content = '# Netscape HTTP Cookie File\n' + content
-            with open(cookie_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            cookie_file_to_use = cookie_path
-        except Exception:
-            pass
-    elif os.path.exists(local_cookie) and os.path.getsize(local_cookie) > 30:
-        cookie_file_to_use = local_cookie
-
+    cookie_file_to_use = get_cookie_file_path()
     if cookie_file_to_use:
         cmd.extend(["--cookies", cookie_file_to_use])
 
