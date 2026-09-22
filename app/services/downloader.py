@@ -1,12 +1,12 @@
 import os
 import glob
+import re
 import asyncio
 import urllib.request
 import traceback
 from typing import Dict, Any, Optional, List
 import yt_dlp
 import subprocess
-import shutil
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
@@ -30,6 +30,12 @@ def resolve_url(url: str) -> str:
         except Exception as e:
             print(f"Error resolving Pinterest url: {e}")
 
+    # Clean Pinterest tracking parameters and extra paths (/sent/?invite_code=...)
+    if "pinterest.com/pin/" in target_url:
+        match = re.search(r'(https?://[^\s]+/pin/\d+)', target_url)
+        if match:
+            target_url = match.group(1) + "/"
+
     if "tiktok.com" in target_url:
         target_url = target_url.split("?")[0]
 
@@ -52,7 +58,6 @@ def get_ydl_options_for_url(url: str) -> dict:
     }
 
     if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-        # mweb, android, and web clients combined ensure format visibility
         options['extractor_args'] = {
             'youtube': {
                 'player_client': ['mweb', 'android', 'web']
@@ -166,8 +171,21 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
 
     is_audio = "mp3" in format_spec.lower() or "mp3" in custom_filename.lower()
 
-    # Build yt-dlp command
-    cmd = ["yt-dlp", "--no-warnings", "--geo-bypass", "-o", outtmpl]
+    # Build yt-dlp command with headers and flags
+    cmd = [
+        "yt-dlp",
+        "--no-warnings",
+        "--geo-bypass",
+        "--nocheckcertificate",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "-o", outtmpl
+    ]
+
+    # Add specific extractor options for YouTube and TikTok in CLI command
+    if any(domain in real_url for domain in ["youtube.com", "youtu.be"]):
+        cmd.extend(["--extractor-args", "youtube:player_client=mweb,android,web"])
+    elif "tiktok.com" in real_url:
+        cmd.extend(["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"])
 
     # Cookie check
     env_cookie = os.getenv('YOUTUBE_COOKIES_TXT')
@@ -211,18 +229,6 @@ async def download_media_file(url: str, format_spec: str, custom_filename: str) 
     success = await asyncio.to_thread(_run_sub)
     if not success:
         return None
-
-    if is_audio:
-        expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
-        if os.path.exists(expected_mp3):
-            return expected_mp3
-
-    matching = glob.glob(os.path.join(DOWNLOAD_DIR, f"{base_name}.*"))
-    for f in matching:
-        if not f.endswith(".part") and not f.endswith(".ytdl"):
-            return f
-
-    return None
 
     if is_audio:
         expected_mp3 = os.path.join(DOWNLOAD_DIR, f"{base_name}.mp3")
